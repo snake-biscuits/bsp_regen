@@ -42,13 +42,17 @@ int main(int argc, char* argv[]) {
     struct SortKey { int offset, index; };
     std::vector<SortKey> lumps;
     for (int i = 0; i < 128; i++) {
-        lumps.push_back({static_cast<int>(r1bsp.header.lumps[i].offset), i});
+        int offset = static_cast<int>(r1bsp.header.lumps[i].offset);
+        if (offset != 0) {
+            lumps.push_back({offset, i});
+        }
     }
     std::sort(lumps.begin(), lumps.end(), [](auto a, auto b) { return a.offset < b.offset; });
 
     #define WRITE_NULLS(byte_count) \
-        std::vector<char> empty;  empty.resize(byte_count); \
-        outfile.write(reinterpret_cast<char*>(&empty), byte_count)
+        std::vector<char> empty;  empty.clear(); \
+        for (int i = 0; i < static_cast<int>(byte_count); i++) { empty.push_back(0); } \
+        outfile.write(reinterpret_cast<char*>(&empty[0]), byte_count)
 
     for (auto &k : lumps) {
         int padding = 4 - (write_cursor % 4);
@@ -110,15 +114,21 @@ int main(int argc, char* argv[]) {
                 WRITE_NULLS(r2lump.length);
             }
             default:  // copy raw lump bytes
-                std::vector<char> buf;  buf.resize(r1lump.length);
-                r1bsp.file.seekg(r1lump.offset);  r1bsp.file.read(INTO(buf[0]), r1lump.length);
-                outfile.write(reinterpret_cast<char*>(&buf), r2lump.length);
+                std::vector<char> buf;
+                buf.clear();
+                buf.resize(r1lump.length);
+                r1bsp.file.seekg(r1lump.offset);
+                r1bsp.file.read(INTO(buf[0]), r1lump.length);
+                outfile.write(reinterpret_cast<char*>(&buf[0]), r1lump.length);
         }
         write_cursor += r2lump.length;
         r2bsp_header.lumps[k.index] = r2lump;
     }
 
+    // TODO: resave the header
+    outfile.seekp(0);
+    outfile.write(reinterpret_cast<char*>(&r2bsp_header), sizeof(r2bsp_header));  // NO EFFECT!?
     outfile.close();
 
     return 0;
-}
+;}
