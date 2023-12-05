@@ -70,7 +70,7 @@ int main(int argc, char* argv[]) {
         };
 
         #define WRITE_NEW_LUMP(T, v) \
-            r2lump.length = sizeof(T) * v.size(); \
+            r2lump.length = static_cast<uint32_t>(sizeof(T) * v.size()); \
             outfile.write(reinterpret_cast<char*>(&v), r2lump.length)
 
         // TODO: Tricoll (https://github.com/snake-biscuits/bsp_tool/discussions/106)

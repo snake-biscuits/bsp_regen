@@ -1,5 +1,5 @@
 CXX       := g++
-CXXFLAGS  := -ggdb --std=c++17 -Wall
+CXXFLAGS  := -ggdb --std=c++20 -Wall
 SRC_DIRS  := src
 ALL_DIRS  := $(addprefix build/,$(SRC_DIRS))
 CPP_FILES := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))

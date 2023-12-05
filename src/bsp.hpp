@@ -75,15 +75,16 @@ class Bsp { public:
 
     template <typename T>
     void load_lump(const int lump_index, std::vector<T> &lump_vector) {
-        auto header = this->header.lumps[lump_index];
-        lump_vector.clear();  lump_vector.resize(header.length / sizeof(T));
-        this->file.seekg(header.offset);
-        this->file.read(INTO(lump_vector[0]), header.length);
+        auto lump_header = this->header.lumps[lump_index];
+        lump_vector.clear();
+        lump_vector.resize(lump_header.length / sizeof(T));
+        this->file.seekg(lump_header.offset);
+        this->file.read(INTO(lump_vector[0]), lump_header.length);
     }
 
     void load_lump_raw(const int lump_index, char* raw_lump) {
-        auto header = this->header.lumps[lump_index];
-        this->file.seekg(header.offset);
-        this->file.read(raw_lump, header.length);
+        auto lump_header = this->header.lumps[lump_index];
+        this->file.seekg(lump_header.offset);
+        this->file.read(raw_lump, lump_header.length);
     }
 };
