@@ -139,7 +139,6 @@ int convert(char* in_filename, char* out_filename) {
         write_cursor += r2lump.length;
     }
 
-printf("new size: %i\n", write_cursor);
     outfile.set_size_and_close(write_cursor);
 
     return 0;

@@ -68,7 +68,7 @@ bool memory_mapped_file::open_existing(const char* filename)
 
 bool memory_mapped_file::open_new(const char* filename, size_t size) {
     file_ = CreateFileA(filename, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL,
-        CREATE_ALWAYS, FILE_FLAG_NO_BUFFERING, NULL);
+        CREATE_ALWAYS, 0, NULL);
     if (!file_ || file_ == INVALID_HANDLE_VALUE) [[unlikely]] {
         auto lastError = GetLastError();
         if (lastError == ERROR_FILE_NOT_FOUND || lastError == ERROR_PATH_NOT_FOUND) {
@@ -112,15 +112,17 @@ void memory_mapped_file::set_size_and_close(size_t new_size) {
         mapping_ = nullptr;
     }
 
+    LARGE_INTEGER out{};
     LARGE_INTEGER new_size_li{ .QuadPart = static_cast<long long>(new_size) };
-    auto ret = SetFilePointerEx(file_, new_size_li, nullptr, FILE_BEGIN);
-    auto lastError = GetLastError();
+    auto ret = SetFilePointerEx(file_, new_size_li, &out, FILE_BEGIN);
 
-    if (ret == INVALID_SET_FILE_POINTER && lastError != NO_ERROR)
-        throw std::runtime_error("Failed changing file size (SetFilePointerEx failed), error: " + std::to_string(lastError));
+    if (ret == 0)
+        throw std::runtime_error("Failed changing file size (SetFilePointerEx failed), error: " + std::to_string(GetLastError()));
 
-    //if (!SetEndOfFile(file_))
-    //    throw std::runtime_error("Failed changing file size (SetEndOfFile failed), error: " + std::to_string(GetLastError()));
+    //assert(out.QuadPart == new_size_li.QuadPart);
+
+    if (!SetEndOfFile(file_))
+        throw std::runtime_error("Failed changing file size (SetEndOfFile failed), error: " + std::to_string(GetLastError()));
 
     size_.QuadPart = new_size_li.QuadPart;
 
