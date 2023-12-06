@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <fstream>
 
+#include "memory_mapped_file.hpp"
 #include "bsp.hpp"
 #include "source.hpp"  // GameLumpHeader
 #include "titanfall.hpp"
@@ -22,27 +23,47 @@ int main(int argc, char* argv[]) {
     char* in_filename  = argv[1];
     char* out_filename = argv[2];
 
+    int ret = 0;
+    try {
+        int convert(char* in_filename, char* out_filename);
+        ret = convert(in_filename, out_filename);
+    } catch (std::exception& e) {
+        fprintf(stderr, "Exception: %s\n", e.what());
+        return 1;
+    }
+
+    return ret;
+}
+
+int convert(char* in_filename, char* out_filename) {
     Bsp  r1bsp(in_filename);
-    if (!r1bsp.is_valid()) {
+    if (!r1bsp.is_valid() || r1bsp.header_->version != titanfall::VERSION) {
         fprintf(stderr, "'%s' is not a Titanfall map!\n", in_filename);
         return 1;
     }
 
-    std::ofstream outfile(out_filename, std::ios::binary);
-    BspHeader r2bsp_header = {
+    memory_mapped_file outfile;
+    const size_t reserved_size = 2 * r1bsp.file_.size();
+    if (!outfile.open_new(out_filename, reserved_size)) {
+        fprintf(stderr, "Could not open file for writing: '%s'\n", out_filename);
+        return 1;
+    }
+    outfile.fill(0xAA);
+
+    BspHeader& r2bsp_header = *outfile.rawdata<BspHeader>(0);
+    r2bsp_header = {
         .magic    = MAGIC_rBSP,
         .version  = titanfall2::VERSION,
-        .revision = r1bsp.header.revision,
+        .revision = r1bsp.header_->revision,
         ._127     = 127
     };
-    outfile.write(reinterpret_cast<char*>(&r2bsp_header), sizeof(r2bsp_header));
     // NOTE: we'll come back to write the new LumpHeaders later
     int write_cursor = sizeof(r2bsp_header);
 
     struct SortKey { int offset, index; };
     std::vector<SortKey> lumps;
     for (int i = 0; i < 128; i++) {
-        int offset = static_cast<int>(r1bsp.header.lumps[i].offset);
+        int offset = static_cast<int>(r1bsp.header_->lumps[i].offset);
         if (offset != 0) {
             lumps.push_back({offset, i});
         }
@@ -50,9 +71,7 @@ int main(int argc, char* argv[]) {
     std::sort(lumps.begin(), lumps.end(), [](auto a, auto b) { return a.offset < b.offset; });
 
     #define WRITE_NULLS(byte_count) \
-        std::vector<char> empty;  empty.clear(); \
-        for (int i = 0; i < static_cast<int>(byte_count); i++) { empty.push_back(0); } \
-        outfile.write(reinterpret_cast<char*>(&empty[0]), byte_count)
+        memset(outfile.rawdata(write_cursor), 0, byte_count);
 
     for (auto &k : lumps) {
         int padding = 4 - (write_cursor % 4);
@@ -61,8 +80,9 @@ int main(int argc, char* argv[]) {
             write_cursor += padding;
         }
 
-        LumpHeader r1lump = r1bsp.header.lumps[k.index];
-        LumpHeader r2lump = {
+        LumpHeader& r1lump = r1bsp.header_->lumps[k.index];
+        LumpHeader& r2lump = r2bsp_header.lumps[k.index];
+        r2lump = {
             .offset  = static_cast<uint32_t>(write_cursor),
             .length  = r1lump.length,
             .version = r1lump.version,
@@ -70,8 +90,8 @@ int main(int argc, char* argv[]) {
         };
 
         #define WRITE_NEW_LUMP(T, v) \
-            r2lump.length = sizeof(T) * v.size(); \
-            outfile.write(reinterpret_cast<char*>(&v), r2lump.length)
+            r2lump.length = static_cast<uint32_t>(sizeof(T) * v.size()); \
+            memcpy(outfile.rawdata(write_cursor), reinterpret_cast<char*>(&v[0]), r2lump.length);
 
         // TODO: Tricoll (https://github.com/snake-biscuits/bsp_tool/discussions/106)
         switch (k.index) {
@@ -92,14 +112,14 @@ int main(int argc, char* argv[]) {
                     .offset  = static_cast<uint32_t>(write_cursor + 4 + sizeof(source::GameLumpHeader)),
                     .length  = 0x14
                 };
-                outfile.write(reinterpret_cast<char*>(&num_game_lumps), sizeof(uint32_t));
-                outfile.write(reinterpret_cast<char*>(&glh), sizeof(source::GameLumpHeader));
-                WRITE_NULLS(glh.length);
+                memcpy(outfile.rawdata(write_cursor), &num_game_lumps, sizeof(uint32_t));
+                memcpy(outfile.rawdata(write_cursor + sizeof(uint32_t)), &glh, sizeof(source::GameLumpHeader));
+                memset(outfile.rawdata(write_cursor + sizeof(uint32_t) + sizeof(source::GameLumpHeader)), 0, glh.length);
                 r2lump.length = sizeof(uint32_t) + sizeof(source::GameLumpHeader) + glh.length;
             }
             case titanfall::LIGHTPROBE_REFS: {  // optional?
-                GET_LUMP(r1bsp, titanfall::LightProbeRef, lprs, titanfall::LIGHTPROBE_REFS);
-                std::vector<titanfall2::LightProbeRef>  new_lprs;
+                auto lprs = r1bsp.get_lump<titanfall::LightProbeRef>(titanfall::LIGHTPROBE_REFS);
+                std::vector<titanfall2::LightProbeRef> new_lprs;
                 for (auto &lpr : lprs) {
                     new_lprs.push_back({
                         .origin  = lpr.origin,
@@ -114,21 +134,12 @@ int main(int argc, char* argv[]) {
                 WRITE_NULLS(r2lump.length);
             }
             default:  // copy raw lump bytes
-                std::vector<char> buf;
-                buf.clear();
-                buf.resize(r1lump.length);
-                r1bsp.file.seekg(r1lump.offset);
-                r1bsp.file.read(INTO(buf[0]), r1lump.length);
-                outfile.write(reinterpret_cast<char*>(&buf[0]), r1lump.length);
+                memcpy(outfile.rawdata(write_cursor), r1bsp.file_.rawdata(r1lump.offset), r1lump.length);
         }
         write_cursor += r2lump.length;
-        r2bsp_header.lumps[k.index] = r2lump;
     }
 
-    // TODO: resave the header
-    outfile.seekp(0);
-    outfile.write(reinterpret_cast<char*>(&r2bsp_header), sizeof(r2bsp_header));  // NO EFFECT!?
-    outfile.close();
+    outfile.set_size_and_close(write_cursor);
 
     return 0;
-;}
+}
