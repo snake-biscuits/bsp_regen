@@ -12,32 +12,39 @@ using namespace std::literals::string_literals;
 
 class memory_mapped_file
 {
-    char* data_{};
+#ifdef _WIN32
     LARGE_INTEGER size_{};
     HANDLE file_{};
     HANDLE mapping_{};
+#else
+    size_t size_{};
+    int file_{};
+#endif
+    char* data_{};
     bool exists_{false};
 
 public:
     bool open_existing(const char* filename);
     bool open_new(const char* filename, size_t size);
-    //bool open(const std::string& filename) { return open(filename.data()); };
-    //bool open(const std::filesystem::path& filename) { return open(filename.str()); };
-    //void prefetch();
     void fill(uint8_t filler);
     void set_size_and_close(size_t new_size);
     void close();
     ~memory_mapped_file() { close(); };
-    inline std::string_view data() { return { data_, static_cast<size_t>(size_.QuadPart) }; }
+    inline std::string_view data() { return { data_, size() }; }
     inline char* rawdata() { return data_; }
     template <typename T> inline T* rawdata() const { return reinterpret_cast<T*>(data_); }
     inline char* rawdata(size_t offset) { return data_ + offset; }
     template <typename T> inline T* rawdata(size_t offset) const { return reinterpret_cast<T*>(data_ + offset); }
-    inline size_t size() { return static_cast<size_t>(size_.QuadPart); }
     inline bool exists() { return exists_; }
+#ifdef _WIN32
+    inline size_t size() { return static_cast<size_t>(size_.QuadPart); }
+#else
+    inline size_t size() { return static_cast<size_t>(size_); }
+#endif
 };
 
 #ifdef _WIN32
+// Windows
 bool memory_mapped_file::open_existing(const char* filename)
 {
     file_ = CreateFileA(filename, FILE_READ_DATA, FILE_SHARE_READ, NULL,
@@ -144,6 +151,49 @@ void memory_mapped_file::close() {
     }
     exists_ = false;
     size_.QuadPart = 0;
+}
+
+#else
+
+// Linux
+
+bool memory_mapped_file::open_existing(const char* filename) {
+    struct stat sb;
+    file_ = open(filename, O_RDONLY, 00777);
+    fstat(fd, &sb);
+    data_ = mmap(NULL, sb.st_size, PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data_ == MAP_FAILED)
+        throw std::runtime_error("Failed creating file mapping: "s + filename);
+
+    exists_ = true;
+    size_ = sb.st_size;
+    return true;
+}
+
+bool memory_mapped_file::open_new(const char* filename, size_t size) {
+    file_ = open(filename, O_CREAT | O_RDWR, 00777);
+    data_ = mmap(NULL, size, PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data_ == MAP_FAILED)
+        throw std::runtime_error("Failed creating file mapping: "s + filename);
+
+    exists_ = true;
+    size_ = size;
+    return true;
+}
+
+void memory_mapped_file::fill(uint8_t filler) {
+    memset(data_, filler, size_);
+}
+
+void memory_mapped_file::close() {
+    munmap(data_, size_);
+    close(file_);
+}
+
+void memory_mapped_file::set_size_and_close(size_t new_size) {
+    munmap(data_, size_);
+    ftruncate(file_, new_size);
+    close(file_);
 }
 
 #endif
