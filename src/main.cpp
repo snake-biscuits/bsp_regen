@@ -43,7 +43,7 @@ int convert(char* in_filename, char* out_filename) {
     }
 
     memory_mapped_file outfile;
-    const size_t reserved_size = 2 * r1bsp.file.size();
+    const size_t reserved_size = 2 * r1bsp.file_.size();
     if (!outfile.open_new(out_filename, reserved_size)) {
         fprintf(stderr, "Could not open file for writing: '%s'\n", out_filename);
         return 1;
@@ -54,7 +54,7 @@ int convert(char* in_filename, char* out_filename) {
     r2bsp_header = {
         .magic    = MAGIC_rBSP,
         .version  = titanfall2::VERSION,
-        .revision = r1bsp.header->revision,
+        .revision = r1bsp.header_->revision,
         ._127     = 127
     };
     // NOTE: we'll come back to write the new LumpHeaders later
@@ -63,7 +63,7 @@ int convert(char* in_filename, char* out_filename) {
     struct SortKey { int offset, index; };
     std::vector<SortKey> lumps;
     for (int i = 0; i < 128; i++) {
-        int offset = static_cast<int>(r1bsp.header->lumps[i].offset);
+        int offset = static_cast<int>(r1bsp.header_->lumps[i].offset);
         if (offset != 0) {
             lumps.push_back({offset, i});
         }
@@ -80,7 +80,7 @@ int convert(char* in_filename, char* out_filename) {
             write_cursor += padding;
         }
 
-        LumpHeader& r1lump = r1bsp.header->lumps[k.index];
+        LumpHeader& r1lump = r1bsp.header_->lumps[k.index];
         LumpHeader& r2lump = r2bsp_header.lumps[k.index];
         r2lump = {
             .offset  = static_cast<uint32_t>(write_cursor),
@@ -134,7 +134,7 @@ int convert(char* in_filename, char* out_filename) {
                 WRITE_NULLS(r2lump.length);
             }
             default:  // copy raw lump bytes
-                memcpy(outfile.rawdata(write_cursor), r1bsp.file.rawdata(r1lump.offset), r1lump.length);
+                memcpy(outfile.rawdata(write_cursor), r1bsp.file_.rawdata(r1lump.offset), r1lump.length);
         }
         write_cursor += r2lump.length;
     }

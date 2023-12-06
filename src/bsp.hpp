@@ -13,10 +13,6 @@
 
 #define MAGIC_rBSP  MAGIC('r', 'B', 'S', 'P')
 
-// file reading
-//#define INTO(x)  reinterpret_cast<char*>(&x)
-//#define GET_LUMP(bsp, T, n, i)  std::vector<T>  n;  bsp.load_lump<T>(i, n)
-
 
 struct LumpHeader {
     uint32_t offset;
@@ -49,24 +45,24 @@ static_assert(offsetof(BspHeader, lumps)    == 0x10);
 
 
 class Bsp { public:
-    BspHeader*         header;
-    memory_mapped_file file;
+    BspHeader*         header_;
+    memory_mapped_file file_;
 
     Bsp(const char* filename) {  // load from file
-        if (!this->file.open_existing(filename))
+        if (!file_.open_existing(filename))
             throw std::runtime_error("Failed to open file");
-        header = this->file.rawdata<BspHeader>();
+        header_ = file_.rawdata<BspHeader>();
     }
 
     ~Bsp() {}
 
     bool is_valid() {
-        if (this->header->magic == MAGIC_rBSP) {
-            switch (this->header->version) {
+        if (header_->magic == MAGIC_rBSP) {
+            switch (header_->version) {
                 case 29:  // Titanfall
                 case 36:  // Titanfall 2 [PS4] (Tech Test)
                 case 37:  // Titanfall 2
-                    return (this->header->_127 == 127);
+                    return (header_->_127 == 127);
                 default:
                     return false;
             }
@@ -88,24 +84,24 @@ class Bsp { public:
     }
 
     void load_lump_raw(const int lump_index, char* raw_lump, size_t raw_lump_size) {
-        auto& lump_header = this->header->lumps[lump_index];
-        memcpy_s(raw_lump, raw_lump_size, this->file.rawdata(lump_header.offset), lump_header.length);
+        auto& lump_header = header_->lumps[lump_index];
+        memcpy_s(raw_lump, raw_lump_size, file_.rawdata(lump_header.offset), lump_header.length);
     }
 
     /*std::string_view lump_view(const int lump_index) {
-        auto& lump_header = this->header->lumps[lump_index];
-        return { this->file.rawdata(lump_header.offset), lump_header.length };
+        auto& lump_header = header_->lumps[lump_index];
+        return { file_.rawdata(lump_header.offset), lump_header.length };
     }*/
 
     template <typename T>
     std::span<T> get_lump(const int lump_index) {
-        auto& lump_header = this->header->lumps[lump_index];
-        return { this->file.rawdata<T>(lump_header.offset), lump_header.length / sizeof(T) };
+        auto& lump_header = header_->lumps[lump_index];
+        return { file_.rawdata<T>(lump_header.offset), lump_header.length / sizeof(T) };
     }
 
     template <typename T>
     T* get_lump_raw(const int lump_index) {
-        auto& lump_header = this->header->lumps[lump_index];
-        return this->file.rawdata<T>(lump_header.offset);
+        auto& lump_header = header_->lumps[lump_index];
+        return file_.rawdata<T>(lump_header.offset);
     }
 };
