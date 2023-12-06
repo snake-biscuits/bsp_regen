@@ -73,7 +73,7 @@ class Bsp { public:
 
     template <typename T>
     void load_lump(const int lump_index, std::vector<T> &lump_vector) {
-        auto& lump_header = header_.lumps[lump_index];
+        auto& lump_header = header_->lumps[lump_index];
         auto* lump_data = file_.rawdata<T>(lump_header.offset);
         lump_vector.assign(lump_data, lump_data[lump_header.length / sizeof(T)]);
     }

@@ -1,12 +1,22 @@
 #pragma once
 
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#endif _WIN32
+#else
+#include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include "memcpy_s.hpp"
+#endif
 
 using namespace std::literals::string_literals;
 
@@ -159,11 +169,17 @@ void memory_mapped_file::close() {
 
 bool memory_mapped_file::open_existing(const char* filename) {
     struct stat sb;
-    file_ = open(filename, O_RDONLY, 00777);
-    fstat(fd, &sb);
-    data_ = mmap(NULL, sb.st_size, PROT_WRITE, MAP_SHARED, fd, 0);
+    file_ = open(filename, O_RDONLY, 00666);
+    if (file_ == -1)
+        throw std::runtime_error("Failed opening file: "s + filename + " (" + std::to_string(errno) + ")");
+
+    if (fstat(file_, &sb) == -1)
+        throw std::runtime_error("Failed fstating file: "s + filename + " (" + std::to_string(errno) + ")");
+    size_ = sb.st_size;
+
+    data_ = reinterpret_cast<char*>(mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, file_, 0));
     if (data_ == MAP_FAILED)
-        throw std::runtime_error("Failed creating file mapping: "s + filename);
+        throw std::runtime_error("Failed creating file mapping: "s + filename+ " (" + std::to_string(errno) + ")");
 
     exists_ = true;
     size_ = sb.st_size;
@@ -171,8 +187,14 @@ bool memory_mapped_file::open_existing(const char* filename) {
 }
 
 bool memory_mapped_file::open_new(const char* filename, size_t size) {
-    file_ = open(filename, O_CREAT | O_RDWR, 00777);
-    data_ = mmap(NULL, size, PROT_WRITE, MAP_SHARED, fd, 0);
+    file_ = open(filename, O_CREAT | O_RDWR, 00666);
+    if (file_ == -1)
+        throw std::runtime_error("Failed opening file: "s + filename + " (" + std::to_string(errno) + ")");
+
+    if (ftruncate(file_, size) == -1)
+        throw std::runtime_error("Failed ftruncating file: "s + filename + " (" + std::to_string(errno) + ")");
+
+    data_ = reinterpret_cast<char*>(mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, file_, 0));
     if (data_ == MAP_FAILED)
         throw std::runtime_error("Failed creating file mapping: "s + filename);
 
@@ -186,14 +208,31 @@ void memory_mapped_file::fill(uint8_t filler) {
 }
 
 void memory_mapped_file::close() {
-    munmap(data_, size_);
-    close(file_);
+    if (data_) {
+        if (munmap(data_, size_) == -1)
+            throw std::runtime_error("Failed munmaping file (" + std::to_string(errno) + ")");
+        data_ = nullptr;
+    }
+    if (file_) {
+        if (::close(file_) == -1)
+            throw std::runtime_error("Failed closing file (" + std::to_string(errno) + ")");
+        file_ = 0;
+    }
 }
 
 void memory_mapped_file::set_size_and_close(size_t new_size) {
-    munmap(data_, size_);
-    ftruncate(file_, new_size);
-    close(file_);
+    if (data_) {
+        if (munmap(data_, size_) == -1)
+            throw std::runtime_error("Failed munmaping file (" + std::to_string(errno) + ")");
+        data_ = nullptr;
+    }
+    if (ftruncate(file_, new_size) == -1)
+        throw std::runtime_error("Failed ftruncating file (" + std::to_string(errno) + ")");
+    if (file_) {
+        if (::close(file_) == -1)
+            throw std::runtime_error("Failed closing file (" + std::to_string(errno) + ")");
+        file_ = 0;
+    }
 }
 
 #endif
