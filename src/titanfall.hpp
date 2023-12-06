@@ -8,7 +8,7 @@
 
 namespace titanfall {
     const int VERSION = 29;
-    const int sprp_VERSION = 12;
+    const int sprp_VERSION = 13;
     /* LUMP INDICES */
     const int GAME_LUMP        = 0x23;
     const int LIGHTPROBE_REFS  = 0x68;
