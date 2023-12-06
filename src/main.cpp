@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 
 int convert(char* in_filename, char* out_filename) {
     Bsp  r1bsp(in_filename);
-    if (!r1bsp.is_valid()) {
+    if (!r1bsp.is_valid() || r1bsp.header_->version != titanfall::VERSION) {
         fprintf(stderr, "'%s' is not a Titanfall map!\n", in_filename);
         return 1;
     }
