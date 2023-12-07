@@ -58,7 +58,6 @@ int convert(char* in_filename, char* out_filename) {
         .revision = r1bsp.header_->revision,
         ._127     = 127
     };
-    // NOTE: we'll come back to write the new LumpHeaders later
     int write_cursor = sizeof(r2bsp_header);
 
     struct SortKey { int offset, index; };
@@ -117,7 +116,7 @@ int convert(char* in_filename, char* out_filename) {
                 memcpy(outfile.rawdata(write_cursor + sizeof(uint32_t)), &glh, sizeof(source::GameLumpHeader));
                 memset(outfile.rawdata(write_cursor + sizeof(uint32_t) + sizeof(source::GameLumpHeader)), 0, glh.length);
                 r2lump.length = sizeof(uint32_t) + sizeof(source::GameLumpHeader) + glh.length;
-            }
+            } break;
             case titanfall::LIGHTPROBE_REFS: {  // optional?
                 auto lprs = r1bsp.get_lump<titanfall::LightProbeRef>(titanfall::LIGHTPROBE_REFS);
                 std::vector<titanfall2::LightProbeRef> new_lprs;
@@ -128,12 +127,12 @@ int convert(char* in_filename, char* out_filename) {
                         .unknown = 0});
                 }
                 WRITE_NEW_LUMP(titanfall2::LightProbeRef, new_lprs);
-            }
+            } break;
             case titanfall::REAL_TIME_LIGHTS: {  // NULLED OUT
                 int texels = r1lump.length / 4;
                 r2lump.length = texels * 9;
                 WRITE_NULLS(r2lump.length);
-            }
+            } break;
             default:  // copy raw lump bytes
                 memcpy(outfile.rawdata(write_cursor), r1bsp.file_.rawdata(r1lump.offset), r1lump.length);
         }
