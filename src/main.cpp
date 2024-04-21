@@ -458,8 +458,10 @@ int convert(char* in_filename, char* out_filename) {
         .revision = r1bsp.header_->revision,
         ._127 = 127
     };
+
     // NOTE: we'll come back to write the new LumpHeaders later
     size_t write_cursor = sizeof(r2bsp_header);
+
 
     struct SortKey { int offset, index; };
     std::vector<SortKey> lumps;
@@ -512,6 +514,7 @@ int convert(char* in_filename, char* out_filename) {
 
         // TODO: Tricoll (https://github.com/snake-biscuits/bsp_tool/discussions/106)
         switch (k.index) {
+
         case titanfall::GAME_LUMP: {  // NULLED OUT
             /* TODO: modify sprp GAME_LUMP */
             // uint32_t  num_mdl_names; char     mdl_names[num_mdl_names][128];  /* COPY */
@@ -631,6 +634,7 @@ int convert(char* in_filename, char* out_filename) {
             break;
         default:  // copy raw lump bytes
             memcpy(outfile.rawdata(write_cursor), r1bsp.file_.rawdata(r1lump.offset), r1lump.length);
+
         }
         write_cursor += r2lump.length;
     }
