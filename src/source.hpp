@@ -55,4 +55,34 @@ namespace source {
     static_assert(offsetof(Tricoll_Header,scale)==0x28);
 
 
+    struct CMGrid{
+        float cellSize;
+        int cellOrg[2];
+        int cellCount[2];
+        int straddleGroupCount;
+        int basePlaneOffset;
+    };
+    static_assert(sizeof(CMGrid)==28);
+    struct GridCell
+    {
+        uint16_t geoSetStart;
+        uint16_t geoSetCount;
+
+    };
+    static_assert(sizeof(GridCell)==4);
+    struct GeoSet{
+        uint16_t straddleGroup;
+        uint16_t primCount;
+        unsigned int primStart;
+    };
+    static_assert(sizeof(GeoSet)==8);
+    struct GeoSetBounds {
+        short origin[3];
+        short sin;
+        short extends[3];
+        short cos;
+    };
+    static_assert(sizeof(GeoSetBounds)==16);
+
+    
 }

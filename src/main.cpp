@@ -1,10 +1,15 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <set>
+#include <map>
+#include <immintrin.h>
+
 
 #include "memory_mapped_file.hpp"
 #include "bsp.hpp"
 #include "source.hpp"  // GameLumpHeader
+#include "models.h"
 #include "titanfall.hpp"
 #include "titanfall2.hpp"
 
@@ -28,6 +33,7 @@ int main(int argc, char* argv[]) {
         int convert(char* in_filename, char* out_filename);
         ret = convert(in_filename, out_filename);
     }
+    catch (std::exception& e) {
         fprintf(stderr, "Exception: %s\n", e.what());
         return 1;
     }
@@ -74,6 +80,272 @@ void write11Bit(uint32_t* writeBuffer, uint64_t offset, uint32_t data) {
 }
 
 typedef const char modelDictEntry[128];
+
+#define PI 3.1415926536f
+__m128 rotate(const __m128& vec, Vector3 angles) {
+
+    __m128 res = vec;
+    float cosVal = cos(angles.x);
+    float sinVal = sin(angles.x);
+    __m128 cosIntrin = _mm_set_ps(0, cosVal, 1, cosVal);
+    __m128 sinIntrin = _mm_set_ps(0, -sinVal, 0, -sinVal);
+
+
+    res = _mm_add_ps(_mm_mul_ps(res, cosIntrin), _mm_mul_ps(sinIntrin, _mm_shuffle_ps(res, res, _MM_SHUFFLE(3, 0, 3, 2))));
+
+    cosVal = cos(angles.y);
+    sinVal = sin(angles.y);
+    cosIntrin = _mm_set_ps(0, 1, cosVal, cosVal);
+    sinIntrin = _mm_set_ps(0, 0, sinVal, -sinVal);
+
+    res = _mm_add_ps(_mm_mul_ps(res, cosIntrin), _mm_mul_ps(sinIntrin, _mm_shuffle_ps(res, res, _MM_SHUFFLE(3, 3, 0, 1))));
+
+    cosVal = cos(angles.y);
+    sinVal = sin(angles.y);
+    cosIntrin = _mm_set_ps(0, cosVal, cosVal, 1);
+    sinIntrin = _mm_set_ps(0, sinVal, -sinVal, 0);
+
+    res = _mm_add_ps(_mm_mul_ps(res, cosIntrin), _mm_mul_ps(sinIntrin, _mm_shuffle_ps(res, res, _MM_SHUFFLE(3, 1, 2, 3))));
+
+    return res;
+}
+
+bool testCollision(float* cellMins, float* cellMaxs, __m128 propMin, __m128 propMax) {
+    if (((cellMins[0] - 1) > propMax.m128_f32[0]) || ((cellMaxs[0] + 1) < propMin.m128_f32[0]))return false;
+    if (((cellMins[1] - 1) > propMax.m128_f32[1]) || ((cellMaxs[1] + 1) < propMin.m128_f32[1]))return false;
+    return true;
+}
+struct MinMax {
+    __m128 min;
+    __m128 max;
+    MinMax() {
+        min = _mm_setzero_ps();
+        max = _mm_setzero_ps();
+    }
+    MinMax(const __m128& start) {
+        min = start;
+        max = start;
+    }
+    void addVector(const __m128& vec) {
+        min = _mm_min_ps(min, vec);
+        max = _mm_max_ps(max, vec);
+    }
+};
+void addPropsToCmGrid(Bsp& r1bsp, std::vector<source::GeoSet>& r2GeoSets, std::vector<source::GeoSetBounds>& r2GeoSetBounds, std::vector<source::GridCell>& r2GridCells, std::vector<uint32_t>& r2Contents, std::vector<uint32_t>& r2Primitives, std::vector<source::GeoSetBounds>& r2PrimitiveBounds) {
+
+    auto GameLump = r1bsp.get_lump<char>(titanfall::GAME_LUMP);
+    source::CMGrid cmGrid = r1bsp.get_lump<source::CMGrid>(titanfall::CM_GRID)[0];
+    auto r1GridCells = r1bsp.get_lump<source::GridCell>(titanfall::CM_GRID_CELLS);
+    auto r1GeoSets = r1bsp.get_lump<source::GeoSet>(titanfall::CM_GEO_SETS);
+    auto r1GeoSetBounds = r1bsp.get_lump<source::GeoSetBounds>(titanfall::CM_GEO_SET_BOUNDS);
+    auto r1Contents = r1bsp.get_lump<uint32_t>(titanfall::CM_UNIQUE_CONTENTS);
+    auto r1Primitives = r1bsp.get_lump<uint32_t>(titanfall::CM_PRIMITIVES);
+    auto r1PrimiviveBounds = r1bsp.get_lump<source::GeoSetBounds>(titanfall::CM_PRIMITIVE_BOUNDS);
+    uint32_t submodelCount = r1bsp.get_lump_length(titanfall::MODELS) / 32;
+    uint32_t subLumpCount = *(uint32_t*)&GameLump[0];
+    uint32_t readPtr = 4;
+
+    for (uint32_t i = 0; i < r1bsp.get_lump_length(titanfall::CM_PRIMITIVES) / 4; i++) {
+        r2Primitives.push_back(r1Primitives[i]);
+        r2PrimitiveBounds.push_back(r1PrimiviveBounds[i]);
+    }
+
+    for (uint32_t lumpIndex = 0; lumpIndex < subLumpCount; lumpIndex++) {
+        source::GameLumpHeader header = *(source::GameLumpHeader*)&GameLump[readPtr];
+        readPtr += sizeof(source::GameLumpHeader);
+        if (header.id != MAGIC_sprp) {
+            readPtr += header.length;
+            continue;
+        }
+        uint32_t modelCount = *(uint32_t*)&GameLump[readPtr];
+        readPtr += 4;
+        modelDictEntry* modelDict = (modelDictEntry*)&GameLump[readPtr];
+        readPtr += 128 * modelCount;
+        uint32_t leafCount = *(uint32_t*)&GameLump[readPtr];
+        readPtr += 4 + 2 * leafCount;
+        uint32_t propCount = *(uint32_t*)&GameLump[readPtr];
+        readPtr += 12;
+        titanfall::StaticProp* props = (titanfall::StaticProp*)&GameLump[readPtr];
+        std::vector<mstudiopertrihdr_t> modelBoundingBoxes;
+        std::vector<MinMax> propBoundingBoxes;
+        std::vector<uint32_t> modelContents;
+        for (int i = 0; i < r1bsp.get_lump_length(titanfall::CM_UNIQUE_CONTENTS) / 4; i++) {
+            r2Contents.push_back(r1Contents[i]);
+        }
+        for (uint32_t i = 0; i < modelCount; i++) {
+            char buffer[1024];
+            snprintf(buffer, 1024, "r1/%s", modelDict[i]);
+            Model model{ buffer };
+            modelBoundingBoxes.push_back(*model.getPerTriHeader());
+            modelContents.push_back(model.getContents());
+        }
+
+        for (uint32_t i = 0; i < propCount; i++) {
+            if (props[i].solidType == 0) {
+                propBoundingBoxes.push_back(MinMax());
+            }
+            else {
+                __m128 scale = _mm_set1_ps(props[i].scale);
+                __m128 origin = _mm_set_ps(0, props[i].m_Origin.z, props[i].m_Origin.y, props[i].m_Origin.x);
+                mstudiopertrihdr_t& perTri = modelBoundingBoxes[props[i].modelIndex];
+                MinMax minMax(_mm_add_ps(origin, rotate(_mm_set_ps(perTri.bbmin.x, perTri.bbmin.y, perTri.bbmin.z, 0), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmin.z, perTri.bbmin.y, perTri.bbmax.x), scale), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmin.z, perTri.bbmax.y, perTri.bbmin.x), scale), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmin.z, perTri.bbmax.y, perTri.bbmax.x), scale), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmax.z, perTri.bbmin.y, perTri.bbmin.x), scale), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmax.z, perTri.bbmin.y, perTri.bbmax.x), scale), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmax.z, perTri.bbmax.y, perTri.bbmin.x), scale), props[i].m_Angles)));
+                minMax.addVector(_mm_add_ps(origin, rotate(_mm_mul_ps(_mm_set_ps(0, perTri.bbmax.z, perTri.bbmax.y, perTri.bbmax.x), scale), props[i].m_Angles)));
+                //extend minMax to prevent semi solid collision
+                propBoundingBoxes.push_back(minMax);
+
+            }
+
+        }
+        float cellMins[2];
+        float cellMaxs[2];
+        std::vector<uint32_t> modelUseCount;
+        for (uint32_t i = 0; i < propCount; i++) {
+            modelUseCount.push_back(0);
+        }
+        for (int y = 0; y < cmGrid.cellCount[1]; y++) {
+            cellMins[1] = (y + cmGrid.cellOrg[1]) * cmGrid.cellSize;
+            cellMaxs[1] = cellMins[1] + cmGrid.cellSize;
+            for (int x = 0; x < cmGrid.cellCount[0]; x++) {
+                cellMins[0] = (x + cmGrid.cellOrg[0]) * cmGrid.cellSize;
+                cellMaxs[0] = cellMins[0] + cmGrid.cellSize;
+                source::GridCell r1Cell = r1GridCells[y * cmGrid.cellCount[0] + x];
+                source::GridCell& r2Cell = r2GridCells.emplace_back();
+                r2Cell.geoSetStart = (uint16_t)r2GeoSets.size();
+                r2Cell.geoSetCount = r1Cell.geoSetCount;
+                //add existing geosets to r2 cell
+                for (uint32_t i = 0; i < r1Cell.geoSetCount; i++) {
+                    r2GeoSets.push_back(r1GeoSets[r1Cell.geoSetStart + i]);
+                    r2GeoSetBounds.push_back(r1GeoSetBounds[r1Cell.geoSetStart + i]);
+                }
+                std::vector<MinMax> propPrimitiveBounds;
+                std::vector<uint32_t> propPrimitives;
+                uint32_t geoSetCollisionFlags = 0;
+                for (uint32_t i = 0; i < propCount; i++) {
+
+                    if (props[i].solidType == 0)continue;
+                    MinMax& propBound = propBoundingBoxes[i];
+                    if (!testCollision(cellMins, cellMaxs, propBound.min, propBound.max))
+                        continue;
+                    //add prop to cell
+
+                    modelUseCount[i]++;
+
+
+                    //this is from the prop loading function
+                    uint32_t collisionFlags = modelContents[props[i].modelIndex];
+                    if ((collisionFlags & 1) != 0 || !collisionFlags)
+                        collisionFlags = collisionFlags & 0xFFFFFFFE | 0xEB0280;
+                    if ((collisionFlags & 2) != 0)
+                        collisionFlags = collisionFlags & 0xFFF7FFFD | 0xE30240;
+                    if ((collisionFlags & 8) != 0)
+                        collisionFlags = collisionFlags & 0xFFB7FFF7 | 0xA30240;
+                    collisionFlags &= ~props[i].collision_flags_remove;
+                    geoSetCollisionFlags |= collisionFlags;
+                    //this could be optimized to do it for each model
+                    uint32_t contentsIndex = 0;
+                    for (uint32_t cont : r2Contents) {
+                        if (cont == collisionFlags)break;
+                        contentsIndex++;
+                    }
+                    if (contentsIndex == r2Contents.size())
+                        r2Contents.push_back(collisionFlags);
+                    uint32_t prim = (contentsIndex & 0xFF) | ((i & 0x1FFFFF) << 8) | (3 << 29);
+                    propPrimitives.push_back(prim);
+                    propPrimitiveBounds.push_back(propBound);
+
+                }
+                if (propPrimitives.size() == 1) {
+                    source::GeoSet& propGeoSet = r2GeoSets.emplace_back();
+
+                    source::GeoSetBounds& propGeoSetBounds = r2GeoSetBounds.emplace_back();
+
+                    __m128 origin = _mm_div_ps(_mm_add_ps(propPrimitiveBounds[0].min, propPrimitiveBounds[0].max), _mm_set1_ps(2));
+                    __m128 extends = _mm_add_ps(_mm_sub_ps(propPrimitiveBounds[0].max, origin), _mm_set1_ps(2));
+                    propGeoSetBounds.origin[0] = (short)origin.m128_f32[0];
+                    propGeoSetBounds.origin[1] = (short)origin.m128_f32[1];
+                    propGeoSetBounds.origin[2] = (short)origin.m128_f32[2];
+                    propGeoSetBounds.cos = 0x8000;
+                    propGeoSetBounds.sin = 0;
+                    propGeoSetBounds.extends[0] = (short)extends.m128_f32[0];
+                    propGeoSetBounds.extends[1] = (short)extends.m128_f32[1];
+                    propGeoSetBounds.extends[2] = (short)extends.m128_f32[2];
+
+
+                    r2Cell.geoSetCount++;
+                    propGeoSet.primCount = 1;
+                    propGeoSet.primStart = propPrimitives[0];
+                    propGeoSet.straddleGroup = 0;
+                }
+                else if (propPrimitives.size() > 1) {
+                    MinMax bounds = propPrimitiveBounds[0];
+                    for (uint32_t i = 1; i < propPrimitiveBounds.size(); i++) {
+                        bounds.addVector(propPrimitiveBounds[i].min);
+                        bounds.addVector(propPrimitiveBounds[i].max);
+                    }
+                    source::GeoSet& propGeoSet = r2GeoSets.emplace_back();
+
+                    source::GeoSetBounds& propGeoSetBounds = r2GeoSetBounds.emplace_back();
+
+                    __m128 origin = _mm_div_ps(_mm_add_ps(bounds.min, bounds.max), _mm_set1_ps(2));
+                    __m128 extends = _mm_add_ps(_mm_sub_ps(bounds.max, origin), _mm_set1_ps(2));
+                    propGeoSetBounds.origin[0] = (short)origin.m128_f32[0];
+                    propGeoSetBounds.origin[1] = (short)origin.m128_f32[1];
+                    propGeoSetBounds.origin[2] = (short)origin.m128_f32[2];
+                    propGeoSetBounds.cos = 0x8000;
+                    propGeoSetBounds.sin = 0;
+                    propGeoSetBounds.extends[0] = (short)extends.m128_f32[0];
+                    propGeoSetBounds.extends[1] = (short)extends.m128_f32[1];
+                    propGeoSetBounds.extends[2] = (short)extends.m128_f32[2];
+
+
+                    r2Cell.geoSetCount++;
+                    propGeoSet.primCount = propPrimitives.size();
+                    propGeoSet.primStart = ((r2Primitives.size() & 0x1FFFFF) << 8);
+                    propGeoSet.straddleGroup = 0;
+                    for (int i = 0; i < propPrimitives.size(); i++) {
+                        r2Primitives.push_back(propPrimitives[i]);
+                        source::GeoSetBounds& primBounds = r2PrimitiveBounds.emplace_back();
+                        __m128 origin = _mm_div_ps(_mm_add_ps(propPrimitiveBounds[i].min, propPrimitiveBounds[i].max), _mm_set1_ps(2));
+                        __m128 extends = _mm_add_ps(_mm_sub_ps(propPrimitiveBounds[i].max, origin), _mm_set1_ps(2));
+                        primBounds.origin[0] = (short)origin.m128_f32[0];
+                        primBounds.origin[1] = (short)origin.m128_f32[1];
+                        primBounds.origin[2] = (short)origin.m128_f32[2];
+                        primBounds.cos = 0x8000;
+                        primBounds.sin = 0;
+                        primBounds.extends[0] = (short)extends.m128_f32[0];
+                        primBounds.extends[1] = (short)extends.m128_f32[1];
+                        primBounds.extends[2] = (short)extends.m128_f32[2];
+                    }
+                }
+            }
+        }
+        if (r2GeoSets.size() > 0xFFFF) {
+            fprintf(stderr, "Geosets too big\n");
+            exit(1);
+        }
+        for (uint32_t i = 0; i < submodelCount; i++) {
+            source::GridCell cell = r1GridCells[r2GridCells.size()];
+            uint32_t start = cell.geoSetStart;
+            cell.geoSetStart = r2GeoSets.size();
+            for (uint32_t j = 0; j < cell.geoSetCount; j++) {
+                r2GeoSets.push_back(r1GeoSets[start + j]);
+                r2GeoSetBounds.push_back(r1GeoSetBounds[start + j]);
+            }
+
+            r2GridCells.push_back(cell);
+        }
+        if (r2GeoSets.size() > 0xFFFF) {
+            fprintf(stderr, "Geosets too big\n");
+            exit(1);
+        }
+    }
+}
 
 void convertTricoll(Bsp& r1bsp, std::vector<source::Tricoll_Header>& r2Header, std::vector<uint16_t>& r2BevelStarts, std::vector<uint32_t>& r2BevelIndices) {
     auto r1TricollHeader = r1bsp.get_lump<source::Tricoll_Header>(titanfall::TRICOLL_HEADER);
@@ -210,6 +482,15 @@ int convert(char* in_filename, char* out_filename) {
 
     convertTricoll(r1bsp, r2TricollHeader, r2BevelStarts, r2BevelIndices);
 
+    std::vector<source::GeoSet> r2GeoSets;
+    std::vector<source::GeoSetBounds> r2GeoSetBounds;
+    std::vector<source::GridCell> r2GridCells;
+    std::vector<uint32_t> r2UniqueContents;
+    std::vector<uint32_t> r2Primitves;
+    std::vector<source::GeoSetBounds> r2PrimitiveBounds;
+    addPropsToCmGrid(r1bsp, r2GeoSets, r2GeoSetBounds, r2GridCells, r2UniqueContents, r2Primitves, r2PrimitiveBounds);
+
+    for (auto& k : lumps) {
         int padding = 4 - (write_cursor % 4);
         if (padding != 4) {
             WRITE_NULLS(padding);
@@ -318,6 +599,24 @@ int convert(char* in_filename, char* out_filename) {
 
         }
         break;
+        case titanfall::CM_GEO_SETS:
+            WRITE_NEW_LUMP(source::GeoSet, r2GeoSets);
+            break;
+        case titanfall::CM_GEO_SET_BOUNDS:
+            WRITE_NEW_LUMP(source::GeoSetBounds, r2GeoSetBounds);
+            break;
+        case titanfall::CM_GRID_CELLS:
+            WRITE_NEW_LUMP(source::GridCell, r2GridCells);
+            break;
+        case titanfall::CM_UNIQUE_CONTENTS:
+            WRITE_NEW_LUMP(uint32_t, r2UniqueContents);
+            break;
+        case titanfall::CM_PRIMITIVES:
+            WRITE_NEW_LUMP(uint32_t, r2Primitves);
+            break;
+        case titanfall::CM_PRIMITIVE_BOUNDS:
+            WRITE_NEW_LUMP(source::GeoSetBounds, r2PrimitiveBounds);
+            break;
         case titanfall::REAL_TIME_LIGHTS: {  // NULLED OUT
             int texels = r1lump.length / 4;
             r2lump.length = texels * 9;

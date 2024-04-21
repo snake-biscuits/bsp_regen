@@ -13,10 +13,20 @@ namespace titanfall {
     const int GAME_LUMP = 0x23;
     const int TRICOLL_TRIS = 0x42;
     const int TRICOLL_HEADER = 0x45;
+    const int MODELS = 0xE;
+    const int CM_GRID = 0x55;
+    const int CM_GRID_CELLS = 0x56;
+    const int CM_GEO_SETS = 0x57;
+    const int CM_GEO_SET_BOUNDS = 0x58;
+    const int CM_PRIMITIVES = 0x59;
+    const int CM_PRIMITIVE_BOUNDS = 0x5A;
+    const int CM_UNIQUE_CONTENTS = 0x5B;
     const int TRICOLL_BEVEL_STARTS = 0x60;
     const int TRICOLL_BEVEL_INDICES = 0x61;
     const int LIGHTPROBE_REFS  = 0x68;
     const int REAL_TIME_LIGHTS = 0x69;
+    
+
 
     struct LightProbeRef {
         Vector3    origin;
