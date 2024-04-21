@@ -35,7 +35,134 @@ int main(int argc, char* argv[]) {
     return ret;
 }
 
+struct BitReader {
+    uint64_t buffer;
+    uint64_t bitsReadFromBuffer;
+    uint32_t* fillBuffer;
+
+    BitReader(uint32_t* startBuffer, uint64_t startBit) {
+        fillBuffer = &startBuffer[startBit / 32];
+        buffer = *fillBuffer++;
+        buffer |= (uint64_t)*fillBuffer++ << 32;
+        buffer = buffer >> (startBit & 0x1F);
+        bitsReadFromBuffer = startBit & 0x1F;
+
+    }
+    uint32_t Read10() {
+
+
+        uint32_t res = buffer & 0x3FF;
+        buffer = buffer >> 10;
+        bitsReadFromBuffer += 10i64;
+        if (bitsReadFromBuffer >= 0x20)
+        {
+            buffer = buffer | ((uint64_t)*fillBuffer++ << (64 - bitsReadFromBuffer));
+            bitsReadFromBuffer -= 32;
+        }
+        return res;
+    }
+};
+
+void write11Bit(uint32_t* writeBuffer, uint64_t offset, uint32_t data) {
+    uint64_t intOffset = offset / 32;
+    uint32_t bitOffset = offset & 0x1F;
+    uint64_t buffer = (uint64_t)writeBuffer[intOffset] | (((uint64_t)writeBuffer[intOffset + 1]) << 32);
+    buffer &= ~(0x7FFll << bitOffset);
+    buffer |= ((uint64_t)(data & 0x7FF)) << bitOffset;
+    writeBuffer[intOffset] = (uint32_t)buffer;
+    writeBuffer[intOffset + 1] = buffer >> 32;
+}
+
 typedef const char modelDictEntry[128];
+
+void convertTricoll(Bsp& r1bsp, std::vector<source::Tricoll_Header>& r2Header, std::vector<uint16_t>& r2BevelStarts, std::vector<uint32_t>& r2BevelIndices) {
+    auto r1TricollHeader = r1bsp.get_lump<source::Tricoll_Header>(titanfall::TRICOLL_HEADER);
+    int headerCount = r1bsp.get_lump_length(titanfall::TRICOLL_HEADER) / sizeof(source::Tricoll_Header);
+    auto r1Indices = r1bsp.get_lump<uint32_t>(titanfall::TRICOLL_BEVEL_INDICES);
+    auto r1Starts = r1bsp.get_lump<uint16_t>(titanfall::TRICOLL_BEVEL_STARTS);
+    auto r1Tris = r1bsp.get_lump<uint32_t>(titanfall::TRICOLL_TRIS);
+
+    for (int i = 0; i < headerCount; i++) {
+        source::Tricoll_Header header = r1TricollHeader[i];
+        uint32_t indicesCount = header.bevelIndicesCount;
+        uint32_t indicesStart = header.bevelIndicesStart;
+        header.bevelIndicesStart = (uint32_t)r2BevelIndices.size();
+        r2Header.push_back(header);
+
+
+        if (!indicesCount)continue;
+
+
+        size_t maxWritePtr = 0;
+
+        uint32_t* writeBuffer = (uint32_t*)malloc(4 * (((indicesCount * 11) + 31) / 32) + 4);
+        memset(writeBuffer, 0, 4 * (((indicesCount * 11) + 31) / 32) + 4);
+
+        uint16_t* r1LocalStarts = &r1Starts[header.trisStart];
+        uint32_t* r1LocalTris = &r1Tris[header.trisStart];
+        uint32_t readIndices = 0;
+        std::map<uint16_t, uint16_t> starts;
+        for (int k = 0; k < header.trisCount; k++) {
+            uint16_t bevelCount = (r1LocalTris[k] >> 24) & 0xF;
+            uint16_t start = r1LocalStarts[k];
+            if (starts.contains(start)) {
+                starts[start] = starts[start] > bevelCount ? starts[start] : bevelCount;
+            }
+            else {
+                starts.emplace(start, bevelCount);
+            }
+
+        }
+        for (std::pair<uint16_t, uint16_t> pair : starts) {
+            uint16_t start = pair.first;
+            uint16_t bevelCount = pair.second;
+
+            BitReader read{ &r1Indices[indicesStart],10u * start };
+            uint16_t writePtr = start;
+
+            if (bevelCount == 15) {
+                uint32_t index;
+                uint32_t startReadIndices = readIndices;
+                do {
+                    uint32_t data = read.Read10();
+                    data |= (read.Read10() << 10);
+                    write11Bit(writeBuffer, writePtr++ * 11, data & 0x7FF);
+                    write11Bit(writeBuffer, writePtr++ * 11, data >> 11);
+                    bevelCount = data & 0x7F;
+                    index = data >> 7;
+
+                    if (index >= r1TricollHeader.size()) {
+                        fprintf(stderr, "Error Tricoll out of range\n");
+                    }
+
+                    for (uint32_t j = 0; j < bevelCount; j++) {
+                        uint32_t val = read.Read10();
+                        write11Bit(writeBuffer, writePtr++ * 11, val);
+                        readIndices++;
+
+                    }
+                } while ((index != i) && bevelCount);
+
+            }
+            else {
+
+                for (uint32_t j = 0; j < bevelCount; j++) {
+                    uint32_t val = read.Read10();;
+                    write11Bit(writeBuffer, writePtr++ * 11, val);
+                }
+            }
+
+
+        }
+
+        for (uint32_t j = 0; j < (indicesCount * 11 + 31) / 32; j++) {
+            r2BevelIndices.push_back(writeBuffer[j]);
+        }
+        free(writeBuffer);
+
+
+    }
+}
 
 int convert(char* in_filename, char* out_filename) {
     Bsp  r1bsp(in_filename);
@@ -75,7 +202,14 @@ int convert(char* in_filename, char* out_filename) {
 #define WRITE_NULLS(byte_count) \
         memset(outfile.rawdata(write_cursor), 0, byte_count);
 
-    for (auto &k : lumps) {
+
+    //calculate Tricoll Data
+    std::vector<source::Tricoll_Header> r2TricollHeader;
+    std::vector<uint32_t> r2BevelIndices;
+    std::vector<uint16_t> r2BevelStarts;
+
+    convertTricoll(r1bsp, r2TricollHeader, r2BevelStarts, r2BevelIndices);
+
         int padding = 4 - (write_cursor % 4);
         if (padding != 4) {
             WRITE_NULLS(padding);
@@ -190,6 +324,12 @@ int convert(char* in_filename, char* out_filename) {
             WRITE_NULLS(r2lump.length);
         }
         break;
+        case titanfall::TRICOLL_HEADER:
+            WRITE_NEW_LUMP(source::Tricoll_Header, r2TricollHeader);
+            break;
+        case titanfall::TRICOLL_BEVEL_INDICES:
+            WRITE_NEW_LUMP(uint32_t, r2BevelIndices);
+            break;
         default:  // copy raw lump bytes
             memcpy(outfile.rawdata(write_cursor), r1bsp.file_.rawdata(r1lump.offset), r1lump.length);
         }

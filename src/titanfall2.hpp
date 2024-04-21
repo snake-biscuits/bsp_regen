@@ -11,6 +11,9 @@ namespace titanfall2 {
     const int sprp_VERSION = 13;
     /* LUMP INDICES */
     const int GAME_LUMP        = 0x23;
+    const int TRICOLL_HEADER = 0x45;
+    const int TRICOLL_BEVEL_STARTS = 0x60;
+    const int TRICOLL_BEVEL_INDICES = 0x61;
     const int LIGHTPROBE_REFS  = 0x68;
     const int REAL_TIME_LIGHTS = 0x69;
 
