@@ -59,3 +59,7 @@ dkms.conf
 
 build/*
 test/extract/*
+
+.vs/
+
+CppProperties.json

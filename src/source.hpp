@@ -4,7 +4,7 @@
 #include <cstdint>
 
 
-#define MAGIC_sprp  MAGIC('s', 'p', 'r', 'p')
+#define MAGIC_sprp  MAGIC('p', 'r', 'p', 's')
 
 
 namespace source {

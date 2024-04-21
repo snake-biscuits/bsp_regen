@@ -104,4 +104,9 @@ class Bsp { public:
         auto& lump_header = header_->lumps[lump_index];
         return file_.rawdata<T>(lump_header.offset);
     }
+
+    int get_lump_length(const int lump_index) {
+        return header_->lumps[lump_index].length;
+    
+    }
 };
