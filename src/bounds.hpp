@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdint>
 #include <immintrin.h>
+#include <limits>
 
 #include "titanfall.hpp"
 
@@ -9,8 +10,8 @@ struct MinMax {
     __m128 min, max;
 
     MinMax() {
-        min = _mm_setzero_ps();
-        max = _mm_setzero_ps();
+        min = _mm_set_ps1(std::numeric_limits<float>::max());
+        max = _mm_set_ps1(std::numeric_limits<float>::lowest());
     }
 
     MinMax(const __m128 &start) {
