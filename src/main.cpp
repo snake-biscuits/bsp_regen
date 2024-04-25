@@ -187,7 +187,7 @@ void addPropsToCmGrid(
                     titanfall::GeoSet &propGeoSet = r2GeoSets.emplace_back();
                     propGeoSet = {
                         .straddle_group = 0,
-                        .num_primitives = (int16_t)propPrimitives.size(),
+                        .num_primitives = (uint16_t)propPrimitives.size(),
                         .first_primitive = (uint32_t)((propPrimitives.size() & 0x1FFFFF) << 8)};
                     r2Cell.num_geo_sets++;
                     for (size_t i = 0; i < propPrimitives.size(); i++) {
@@ -262,7 +262,7 @@ void convertTricoll(
         for (std::pair<uint16_t, uint16_t> pair : starts) {
             uint16_t start = pair.first;
             uint16_t num_bevels = pair.second;
-            BitReader read {&r1Indices[first_bevel_index], 10 * start};
+            BitReader read {&r1Indices[first_bevel_index], (uint64_t)(10 * start)};
             uint16_t writePtr = start;
             if (num_bevels == 15) {
                 uint32_t index;
