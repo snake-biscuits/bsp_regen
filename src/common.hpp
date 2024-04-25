@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <immintrin.h>
 
 
 #define MAGIC(a, b, c, d)  ((a << 0) | (b << 8) | (c << 16) | (d << 24))

@@ -1,11 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <fstream>
 #include <cstring>
+#include <fstream>
+#include <span>
 #include <stdexcept>
 #include <vector>
-#include <span>
 
 #include "common.hpp"
 #include "memory_mapped_file.hpp"
@@ -45,8 +45,8 @@ static_assert(offsetof(BspHeader, lumps)    == 0x10);
 
 
 class Bsp { public:
-    BspHeader*         header_;
-    memory_mapped_file file_;
+    BspHeader          *header_;
+    memory_mapped_file  file_;
 
     Bsp(const char* filename) {  // load from file
         if (!file_.open_existing(filename))
@@ -73,8 +73,8 @@ class Bsp { public:
 
     template <typename T>
     void load_lump(const int lump_index, std::vector<T> &lump_vector) {
-        auto& lump_header = header_->lumps[lump_index];
-        auto* lump_data = file_.rawdata<T>(lump_header.offset);
+        auto &lump_header = header_->lumps[lump_index];
+        auto *lump_data = file_.rawdata<T>(lump_header.offset);
         lump_vector.assign(lump_data, lump_data[lump_header.length / sizeof(T)]);
     }
 
@@ -84,29 +84,30 @@ class Bsp { public:
     }
 
     void load_lump_raw(const int lump_index, char* raw_lump, size_t raw_lump_size) {
-        auto& lump_header = header_->lumps[lump_index];
+        auto &lump_header = header_->lumps[lump_index];
         memcpy_s(raw_lump, raw_lump_size, file_.rawdata(lump_header.offset), lump_header.length);
     }
 
-    /*std::string_view lump_view(const int lump_index) {
-        auto& lump_header = header_->lumps[lump_index];
+    /*
+    std::string_view lump_view(const int lump_index) {
+        auto &lump_header = header_->lumps[lump_index];
         return { file_.rawdata(lump_header.offset), lump_header.length };
-    }*/
+    }
+    */
 
     template <typename T>
     std::span<T> get_lump(const int lump_index) {
-        auto& lump_header = header_->lumps[lump_index];
+        auto &lump_header = header_->lumps[lump_index];
         return { file_.rawdata<T>(lump_header.offset), lump_header.length / sizeof(T) };
     }
 
     template <typename T>
-    T* get_lump_raw(const int lump_index) {
-        auto& lump_header = header_->lumps[lump_index];
+    T *get_lump_raw(const int lump_index) {
+        auto &lump_header = header_->lumps[lump_index];
         return file_.rawdata<T>(lump_header.offset);
     }
 
     int get_lump_length(const int lump_index) {
         return header_->lumps[lump_index].length;
-    
     }
 };
