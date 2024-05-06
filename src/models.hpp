@@ -7,7 +7,7 @@
 
 
 struct mstudiopertrihdr_t {
-    short     version;  // game requires this to be 2 or else it errors
+    int16_t   version;  // game requires this to be 2 or else it errors
     int16_t   unk;  // may or may not exist, version gets cast as short in ida
     Vector3   bbmin;
     Vector3   bbmax;
@@ -20,7 +20,7 @@ struct studiohdr_t {
     int32_t   version;  // Format version number
     int32_t   checksum;  // This has to be the same in the .phy and .vtx files to load!
     char      name[64];  // The internal name of the model, padded with null bytes.
-    int       length;  // Data size of MDL file in bytes.
+    int32_t   length;  // Data size of MDL file in bytes.
     Vector3   eye_position;  // ideal eye position
     Vector3   illum_position;     // illumination center
     Vector3   hull_min, hull_max;  // ideal movement hull size
@@ -119,12 +119,16 @@ public:
         header2_ = file_.rawdata<studiohdr2_t>(header_->studiohdr2_index);
     }
 
-    ~Model() { file_.close(); }
+    ~Model() {
+        file_.close();
+    }
 
     mstudiopertrihdr_t *getPerTriHeader() {
         if (header2_->per_tri_AABB_index == 0) { return 0; }
         return file_.rawdata<mstudiopertrihdr_t>(header_->studiohdr2_index + header2_->per_tri_AABB_index);
     }
 
-    uint32_t getContents() { return header_->contents; }
+    uint32_t getContents() {
+        return header_->contents;
+    }
 };

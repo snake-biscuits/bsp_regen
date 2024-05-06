@@ -8,7 +8,7 @@
 #include "bounds.hpp"
 #include "bsp.hpp"
 #include "memory_mapped_file.hpp"
-#include "models.h"
+#include "models.hpp"
 #include "source.hpp"  // GameLumpHeader
 #include "titanfall.hpp"
 #include "titanfall2.hpp"
