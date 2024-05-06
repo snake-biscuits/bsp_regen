@@ -59,9 +59,9 @@ titanfall::Bounds bounds_from_minmax(MinMax &mm) {
     int16_t extents_z = static_cast<int16_t>(_mm_cvtss_f32(extents));
     titanfall::Bounds bounds = {
         .origin = {origin_x, origin_y, origin_z},
-        .sin = 0x0000,
+        .sin = 0,
         .extents = {extents_x, extents_y, extents_z},
-        .cos = 0x0080};
+        .cos = -32768};
     return bounds;
 }
 
