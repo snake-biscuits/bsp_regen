@@ -6,4 +6,4 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 project(bsp_regen VERSION 0.0)
 
-add_executable(convert src/main.cpp)
+add_executable(bsp_regen src/main.cpp)
