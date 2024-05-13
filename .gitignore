@@ -81,3 +81,7 @@ Makefile
 *.sln
 Debug/
 x64/
+
+# user files
+r1/
+*.bsp
