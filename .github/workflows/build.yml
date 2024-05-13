@@ -6,10 +6,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Add MSVC tools to PATH
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: actions/checkout@v4
 
       - name: Setup CMake
         run: cmake .
@@ -23,7 +20,7 @@ jobs:
         run: echo commit=$(git rev-parse --short HEAD) >> $GITHUB_OUTPUT
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bsp_regen-windows-${{ steps.extract.outputs.commit }}
           path: |
@@ -33,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup CMake
         run: cmake .
@@ -47,7 +44,7 @@ jobs:
         run: echo commit=$(git rev-parse --short HEAD) >> $GITHUB_OUTPUT
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bsp_regen-linux-${{ steps.extract.outputs.commit }}
           path: |
