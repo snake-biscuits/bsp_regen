@@ -82,6 +82,11 @@ Makefile
 Debug/
 x64/
 
+# Ninja builds
+.ninja_deps
+.ninja_log
+build.ninja
+
 # user files
 r1/
 *.bsp
