@@ -61,5 +61,23 @@ build/*
 test/extract/*
 
 .vs/
-
 CppProperties.json
+
+
+# CMake
+CMakeFiles/
+*.dir/
+CMakeCache.txt
+cmake_install.cmake
+cmake_uninstall.cmake
+Makefile
+
+# GNU make builds
+Makefile
+
+# MSVC builds
+*.vcxproj
+*.vcxproj.filters
+*.sln
+Debug/
+x64/
