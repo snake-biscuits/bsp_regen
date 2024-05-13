@@ -111,8 +111,8 @@ namespace titanfall {
         uint8_t   diffuse_modulation_g;
         uint8_t   diffuse_modulation_b;
         uint8_t   diffuse_modulation_a;
-        float     scale;
         uint32_t  disable_x360;
+        float     scale;
         uint32_t  collision_flags_add;
         uint32_t  collision_flags_remove;
     };
@@ -139,8 +139,8 @@ namespace titanfall {
     static_assert(offsetof(StaticProp, diffuse_modulation_g)    == 0x41);
     static_assert(offsetof(StaticProp, diffuse_modulation_b)    == 0x42);
     static_assert(offsetof(StaticProp, diffuse_modulation_a)    == 0x43);
-    static_assert(offsetof(StaticProp, scale)                   == 0x44);
-    static_assert(offsetof(StaticProp, disable_x360)            == 0x48);
+    static_assert(offsetof(StaticProp, disable_x360)            == 0x44);
+    static_assert(offsetof(StaticProp, scale)                   == 0x48);
     static_assert(offsetof(StaticProp, collision_flags_add)     == 0x4C);
     static_assert(offsetof(StaticProp, collision_flags_remove)  == 0x50);
 
