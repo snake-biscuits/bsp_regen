@@ -57,7 +57,6 @@ bool InitFileSystem(const char* gamePath, const char* mapName) {
     std::string binPath = std::string(gamePath) + "\\bin\\x64_retail";
 
     // Set environment variables
-    _putenv_s("Project", binPath.c_str());
     _putenv_s("VPROJECT", "r1");
 
     // Set DLL directory
@@ -127,14 +126,6 @@ bool InitFileSystem(const char* gamePath, const char* mapName) {
     char* formatString = reinterpret_cast<char*>(formatStringAddr);
     if (!WriteMemory(formatString + 7, &nullChar, sizeof(char))) {
         printf("Failed to modify format string.\n");
-        return false;
-    }
-
-    // Change "VProject" to "Project" in bsppack.dll
-    uintptr_t vProjectAddr = reinterpret_cast<uintptr_t>(hBsppack) + VPROJECT_ADDR_OFFSET;
-    char* vProjectStr = reinterpret_cast<char*>(vProjectAddr);
-    if (!WriteMemory(vProjectStr, "Project", 7)) {
-        printf("Failed to modify VProject string.\n");
         return false;
     }
 
