@@ -13,31 +13,36 @@
 #include "titanfall.hpp"
 #include "titanfall2.hpp"
 #include "tricoll.hpp"
-
+#include "filesystem.h"
 
 #define PI 3.1415926536f
 typedef const char ModelDictEntry[128];
 
-
 void print_usage(char* argv0) {
-    printf("USAGE: %s titanfall.bsp titanfall2.bsp\n", argv0);
+    printf("USAGE: %s <game_dir> <titanfall.bsp> <titanfall2.bsp>\n", argv0);
     // printf("USAGE: %s -d titanfall_dir/ titanfall2_dir/\n", argv0);
 }
 
-
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
+    if (argc != 4) {
         print_usage(argv[0]);
         return 0;
     }
-    char* in_filename  = argv[1];
-    char* out_filename = argv[2];
+    char* game_dir = argv[1];
+    char* in_filename = argv[2];
+    char* out_filename = argv[3];
 
+    // Initialize the file system with the provided game directory
+    if (!InitFileSystem(game_dir, in_filename)) {
+        fprintf(stderr, "Failed to initialize filesystem\n");
+        return 1;
+    }
     int ret = 0;
     try {
         int convert(char* in_filename, char* out_filename);
         ret = convert(in_filename, out_filename);
-    } catch (std::exception &e) {
+    }
+    catch (std::exception& e) {
         fprintf(stderr, "Exception: %s\n", e.what());
         return 1;
     }
@@ -220,6 +225,7 @@ void addPropsToCmGrid(
 }
 
 
+
 void convertTricoll(
     Bsp                                   &r1bsp,
     std::vector<titanfall::TricollHeader> &r2Header,
@@ -298,7 +304,7 @@ void convertTricoll(
 
 
 int convert(char *in_filename, char *out_filename) {
-    Bsp  r1bsp(in_filename);
+    Bsp  r1bsp((std::string("maps/") + in_filename).c_str());
     if (!r1bsp.is_valid() || r1bsp.header_->version != titanfall::VERSION) {
         fprintf(stderr, "'%s' is not a Titanfall map!\n", in_filename);
         return 1;
