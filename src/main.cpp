@@ -101,30 +101,51 @@ void copy_model_files(const char* game_dir, const char* output_folder, const std
         fs::path mdl_path = dst_base_path;
         fs::path rmdlconv_out_dir = dst_base_path.parent_path() / "rmdlconv_out";
 
-        std::string cmd = "" + rmdlconv_path.string() + " -targetversion 53 -nopause -convertmodel \"" + mdl_path.string() + "\""; // if you add quotes it breaks so uh dont put this in a path with spaces sorry
-        int result = std::system(cmd.c_str());
+        // Prepare command line
+        std::wstring cmdLine = L"\"" + rmdlconv_path.wstring() + L"\" -targetversion 53 -nopause -convertmodel \"" + mdl_path.wstring() + L"\"";
 
-        if (result == 0) {
-            fs::path converted_mdl = rmdlconv_out_dir / (mdl_path.filename().string() + "_new");
+        // Set up process information
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
 
-            if (fs::exists(converted_mdl)) {
-                // Remove original files
-                for (const auto& ext : extensions) {
-                    fs::path to_remove = dst_base_path;
-                    to_remove.replace_extension(ext);
-                    fs::remove(to_remove);
+        // Create the process
+        if (CreateProcessW(NULL, &cmdLine[0], NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
+            // Wait for the process to finish
+            WaitForSingleObject(pi.hProcess, INFINITE);
+
+            // Get the exit code
+            DWORD exitCode;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+
+            // Close process and thread handles
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+
+            if (exitCode == 0) {
+                fs::path converted_mdl = rmdlconv_out_dir / (mdl_path.filename().string() + "_new");
+                if (fs::exists(converted_mdl)) {
+                    // Remove original files
+                    for (const auto& ext : extensions) {
+                        fs::path to_remove = dst_base_path;
+                        to_remove.replace_extension(ext);
+                        fs::remove(to_remove);
+                    }
+                    // Move converted file
+                    fs::rename(converted_mdl, mdl_path);
+                    printf("Converted and replaced: %s\n", mdl_path.string().c_str());
                 }
-
-                // Move converted file
-                fs::rename(converted_mdl, mdl_path);
-                printf("Converted and replaced: %s\n", mdl_path.string().c_str());
             }
+        }
+        else {
+            printf("Failed to start rmdlconv process. Error code: %d\n", GetLastError());
         }
 
         // Clean up rmdlconv_out directory
         fs::remove_all(rmdlconv_out_dir);
     }
 }
+
 
 int main(int argc, char* argv[]) {
     if (argc != 4) {
