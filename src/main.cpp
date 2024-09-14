@@ -99,7 +99,7 @@ void addPropsToCmGrid(
         }
         for (uint32_t i = 0; i < num_models; i++) {
             char buffer[1024];
-            snprintf(buffer, 1024, "r1/%s", modelDict[i]);
+            snprintf(buffer, 1024, "%s", modelDict[i]);
             Model model {buffer};
             modelBoundingBoxes.push_back(*model.getPerTriHeader());
             modelContents.push_back(model.getContents());
