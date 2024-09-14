@@ -13,55 +13,219 @@
 #include "titanfall.hpp"
 #include "titanfall2.hpp"
 #include "tricoll.hpp"
-
-
+#include "filesystem.h"
+#include <filesystem>
+#include <iostream>
+#include "Windows.h"
 #define PI 3.1415926536f
 typedef const char ModelDictEntry[128];
-
+namespace fs = std::filesystem;
 
 void print_usage(char* argv0) {
-    printf("USAGE: %s titanfall.bsp titanfall2.bsp\n", argv0);
-    // printf("USAGE: %s -d titanfall_dir/ titanfall2_dir/\n", argv0);
+    printf("USAGE: %s <game_dir> <titanfall.bsp> <output_folder>\n", argv0);
+}
+
+
+fs::path get_executable_path() {
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    return fs::path(path).parent_path();
+}
+void copy_model_files(const char* game_dir, const char* output_folder, const std::vector<std::string>& model_paths, const std::string& map_name) {
+    fs::path models_output_dir = fs::path(output_folder);
+    fs::create_directories(models_output_dir / "models");
+    fs::create_directories(models_output_dir / "maps");
+
+    std::vector<std::string> extensions = { ".mdl", ".ani", ".phy", ".dx11.vtx", ".vvd", ".vvc" };
+    std::vector<std::string> ent_types = { "snd", "env", "spawn", "fx", "script" };
+
+    fs::path exe_path = get_executable_path();
+    fs::path rmdlconv_path = exe_path / "rmdlconv.exe";
+
+    // Function to copy a file from VPK to the output directory
+    auto copy_file_from_vpk = [&](const std::string& src_path, const fs::path& dst_path) {
+        FileHandle_t src_file = g_pFileSystem->Open(src_path.c_str(), "rb");
+        if (!src_file) {
+            fprintf(stderr, "Failed to open source file: %s\n", src_path.c_str());
+            return;
+        }
+
+        int file_size = g_pFileSystem->Size(src_file);
+        std::vector<char> buffer(file_size);
+        g_pFileSystem->Read(buffer.data(), file_size, src_file);
+        g_pFileSystem->Close(src_file);
+
+        std::ofstream dst_file(dst_path, std::ios::binary);
+        if (!dst_file) {
+            fprintf(stderr, "Failed to create destination file: %s\n", dst_path.string().c_str());
+            return;
+        }
+        dst_file.write(buffer.data(), file_size);
+        dst_file.close();
+
+        printf("Copied file: %s\n", src_path.c_str());
+        };
+
+    // Copy .ent files
+    for (const auto& ent_type : ent_types) {
+        std::string ent_file = "maps/" + map_name + "_" + ent_type + ".ent";
+        fs::path dst_path = models_output_dir / "maps" / (map_name + "_" + ent_type + ".ent");
+        copy_file_from_vpk(ent_file, dst_path);
+    }
+
+    // Process model files
+    for (const auto& model_path : model_paths) {
+        fs::path base_path = fs::path(model_path);
+
+        // Only process .mdl files
+        if (base_path.extension() != ".mdl") {
+            continue;
+        }
+
+        fs::path dst_base_path = models_output_dir / base_path;
+        fs::create_directories(dst_base_path.parent_path());
+
+        // Copy all related files first
+        for (const auto& ext : extensions) {
+            fs::path current_path = base_path;
+            current_path.replace_extension(ext);
+            std::string current_path_str = current_path.string();
+
+            fs::path dst_path = dst_base_path;
+            dst_path.replace_extension(ext);
+
+            copy_file_from_vpk(current_path_str, dst_path);
+        }
+
+        // Now process the .mdl file with rmdlconv
+        fs::path mdl_path = dst_base_path;
+        fs::path rmdlconv_out_dir = dst_base_path.parent_path() / "rmdlconv_out";
+
+        // Prepare command line
+        std::wstring cmdLine = L"\"" + rmdlconv_path.wstring() + L"\" -targetversion 53 -nopause -convertmodel \"" + mdl_path.wstring() + L"\"";
+
+        // Set up process information
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+
+        // Create the process
+        if (CreateProcessW(NULL, &cmdLine[0], NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
+            // Wait for the process to finish
+            WaitForSingleObject(pi.hProcess, INFINITE);
+
+            // Get the exit code
+            DWORD exitCode;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+
+            // Close process and thread handles
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+
+            if (exitCode == 0) {
+                fs::path converted_mdl = rmdlconv_out_dir / (mdl_path.filename().string() + "_new");
+                if (fs::exists(converted_mdl)) {
+                    // Remove original files
+                    for (const auto& ext : extensions) {
+                        fs::path to_remove = dst_base_path;
+                        to_remove.replace_extension(ext);
+                        fs::remove(to_remove);
+                    }
+                    // Move converted file
+                    fs::rename(converted_mdl, mdl_path);
+                    printf("Converted and replaced: %s\n", mdl_path.string().c_str());
+                }
+            }
+        }
+        else {
+            printf("Failed to start rmdlconv process. Error code: %d\n", GetLastError());
+        }
+
+        // Clean up rmdlconv_out directory
+        fs::remove_all(rmdlconv_out_dir);
+    }
 }
 
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
+    if (argc != 4) {
         print_usage(argv[0]);
         return 0;
     }
-    char* in_filename  = argv[1];
-    char* out_filename = argv[2];
+    char* game_dir = argv[1];
+    char* in_filename = argv[2];
+    char* output_folder_with_extension = argv[3];
 
-    int ret = 0;
-    try {
-        int convert(char* in_filename, char* out_filename);
-        ret = convert(in_filename, out_filename);
-    } catch (std::exception &e) {
-        fprintf(stderr, "Exception: %s\n", e.what());
+    // Remove .bsp extension from in_filename if present
+    std::string in_filename_without_ext(in_filename);
+    if (in_filename_without_ext.length() > 4 && in_filename_without_ext.substr(in_filename_without_ext.length() - 4) == ".bsp") {
+        in_filename_without_ext = in_filename_without_ext.substr(0, in_filename_without_ext.length() - 4);
+    }
+    // Ditto
+    std::string output_folder(output_folder_with_extension);
+    if (output_folder.length() > 4 && output_folder.substr(output_folder.length() - 4) == ".bsp") {
+        output_folder = output_folder.substr(0, output_folder.length() - 4);
+    }
+    // Initialize the file system with the provided game directory
+    if (!InitFileSystem(game_dir, in_filename)) {
+        fprintf(stderr, "Failed to initialize filesystem\n");
         return 1;
     }
+
+    // Create output directories
+    fs::path maps_output_dir = fs::path(output_folder) / "maps";
+    try {
+        fs::create_directories(maps_output_dir);
+    }
+    catch (const fs::filesystem_error& e) {
+        std::cerr << "Failed to create output directory: " << e.what() << std::endl;
+        return 1;
+    }
+
+    // Construct output filename
+    fs::path out_filename = maps_output_dir / fs::path(in_filename).filename();
+
+    std::cout << "Output file will be written to: " << out_filename << std::endl;
+
+    int ret = 0;
+    std::vector<std::string> model_paths;
+    try {
+        int convert(char* in_filename, const char* out_filename, std::vector<std::string>&model_paths);
+        ret = convert(in_filename, fs::absolute(out_filename).string().c_str(), model_paths);
+    }
+    catch (const std::exception& e) {
+        fprintf(stderr, "Exception during conversion: %s\n", e.what());
+        return 1;
+    }
+
+    if (ret == 0) {
+        // Copy model files
+        copy_model_files(game_dir, output_folder.c_str(), model_paths, in_filename_without_ext);
+    }
+    else {
+        fprintf(stderr, "Conversion failed with return code: %d\n", ret);
+    }
+
     return ret;
 }
 
-
 void addPropsToCmGrid(
-    Bsp                              &r1bsp,
-    std::vector<titanfall::GeoSet>   &r2GeoSets,
-    std::vector<titanfall::Bounds>   &r2GeoSetBounds,
-    std::vector<titanfall::GridCell> &r2GridCells,
-    std::vector<uint32_t>            &r2Contents,
-    std::vector<uint32_t>            &r2Primitives,
-    std::vector<titanfall::Bounds>   &r2PrimitiveBounds) {
+    Bsp& r1bsp,
+    std::vector<titanfall::GeoSet>& r2GeoSets,
+    std::vector<titanfall::Bounds>& r2GeoSetBounds,
+    std::vector<titanfall::GridCell>& r2GridCells,
+    std::vector<uint32_t>& r2Contents,
+    std::vector<uint32_t>& r2Primitives,
+    std::vector<titanfall::Bounds>& r2PrimitiveBounds) {
 
-    auto r1GameLump        = r1bsp.get_lump<char>               (titanfall::GAME_LUMP);
-    auto r1Grid            = r1bsp.get_lump<titanfall::Grid>    (titanfall::CM_GRID)[0];
-    auto r1GridCells       = r1bsp.get_lump<titanfall::GridCell>(titanfall::CM_GRID_CELLS);
-    auto r1GeoSets         = r1bsp.get_lump<titanfall::GeoSet>  (titanfall::CM_GEO_SETS);
-    auto r1GeoSetBounds    = r1bsp.get_lump<titanfall::Bounds>  (titanfall::CM_GEO_SET_BOUNDS);
-    auto r1Contents        = r1bsp.get_lump<uint32_t>           (titanfall::CM_UNIQUE_CONTENTS);
-    auto r1Primitives      = r1bsp.get_lump<uint32_t>           (titanfall::CM_PRIMITIVES);
-    auto r1PrimiviveBounds = r1bsp.get_lump<titanfall::Bounds>  (titanfall::CM_PRIMITIVE_BOUNDS);
+    auto r1GameLump = r1bsp.get_lump<char>(titanfall::GAME_LUMP);
+    auto r1Grid = r1bsp.get_lump<titanfall::Grid>(titanfall::CM_GRID)[0];
+    auto r1GridCells = r1bsp.get_lump<titanfall::GridCell>(titanfall::CM_GRID_CELLS);
+    auto r1GeoSets = r1bsp.get_lump<titanfall::GeoSet>(titanfall::CM_GEO_SETS);
+    auto r1GeoSetBounds = r1bsp.get_lump<titanfall::Bounds>(titanfall::CM_GEO_SET_BOUNDS);
+    auto r1Contents = r1bsp.get_lump<uint32_t>(titanfall::CM_UNIQUE_CONTENTS);
+    auto r1Primitives = r1bsp.get_lump<uint32_t>(titanfall::CM_PRIMITIVES);
+    auto r1PrimiviveBounds = r1bsp.get_lump<titanfall::Bounds>(titanfall::CM_PRIMITIVE_BOUNDS);
     uint32_t submodelCount = r1bsp.get_lump_length(titanfall::MODELS) / 32;
     uint32_t subLumpCount = *(uint32_t*)&r1GameLump[0];
     uint32_t readPtr = 4;
@@ -78,13 +242,13 @@ void addPropsToCmGrid(
         }
         uint32_t num_models = *(uint32_t*)&r1GameLump[readPtr];
         readPtr += 4;
-        ModelDictEntry *modelDict = (ModelDictEntry*)&r1GameLump[readPtr];
+        ModelDictEntry* modelDict = (ModelDictEntry*)&r1GameLump[readPtr];
         readPtr += 128 * num_models;
         uint32_t num_leaves = *(uint32_t*)&r1GameLump[readPtr];
         readPtr += 4 + 2 * num_leaves;
         uint32_t num_props = *(uint32_t*)&r1GameLump[readPtr];
         readPtr += 12;  // num_props, unknown_1, unknown_2
-        titanfall::StaticProp *props = (titanfall::StaticProp*)&r1GameLump[readPtr];
+        titanfall::StaticProp* props = (titanfall::StaticProp*)&r1GameLump[readPtr];
 
         std::vector<mstudiopertrihdr_t>  modelBoundingBoxes;
         std::vector<MinMax>              propBoundingBoxes;
@@ -94,18 +258,19 @@ void addPropsToCmGrid(
         }
         for (uint32_t i = 0; i < num_models; i++) {
             char buffer[1024];
-            snprintf(buffer, 1024, "r1/%s", modelDict[i]);
-            Model model {buffer};
+            snprintf(buffer, 1024, "%s", modelDict[i]);
+            Model model{ buffer };
             modelBoundingBoxes.push_back(*model.getPerTriHeader());
             modelContents.push_back(model.getContents());
         }
         for (uint32_t i = 0; i < num_props; i++) {
             if (props[i].solid_type == 0) {  // non-solid
                 propBoundingBoxes.push_back(MinMax());
-            } else {
+            }
+            else {
                 __m128 origin = _mm_set_ps(0, props[i].origin.z, props[i].origin.y, props[i].origin.x);
                 __m128 scale = _mm_set1_ps(props[i].scale);
-                mstudiopertrihdr_t &perTri = modelBoundingBoxes[props[i].model_name];
+                mstudiopertrihdr_t& perTri = modelBoundingBoxes[props[i].model_name];
                 MinMax minMax = minmax_from_instance_bounds(perTri.bbmin, perTri.bbmax, origin, props[i].angles, scale);
                 // extend minMax to prevent semi solid collision
                 propBoundingBoxes.push_back(minMax);
@@ -121,7 +286,7 @@ void addPropsToCmGrid(
                 cellMins[0] = (x + r1Grid.cell_offset[0]) * r1Grid.scale;
                 cellMaxs[0] = cellMins[0] + r1Grid.scale;
                 titanfall::GridCell  r1Cell = r1GridCells[y * r1Grid.num_cells[0] + x];
-                titanfall::GridCell &r2Cell = r2GridCells.emplace_back();
+                titanfall::GridCell& r2Cell = r2GridCells.emplace_back();
                 r2Cell.first_geo_set = (uint16_t)r2GeoSets.size();
                 r2Cell.num_geo_sets = r1Cell.num_geo_sets;
                 // add existing geosets to r2 cell
@@ -134,7 +299,7 @@ void addPropsToCmGrid(
                 uint32_t geoSetCollisionFlags = 0;
                 for (uint32_t i = 0; i < num_props; i++) {
                     if (props[i].solid_type == 0) { continue; }
-                    MinMax &propBound = propBoundingBoxes[i];
+                    MinMax& propBound = propBoundingBoxes[i];
                     if (!testCollision(cellMins, cellMaxs, propBound.min, propBound.max)) {
                         continue;
                     }
@@ -167,13 +332,13 @@ void addPropsToCmGrid(
                     propPrimitiveBounds.push_back(propBound);
                 }
                 if (propPrimitives.size() == 1) {
-                    titanfall::Bounds &propGeoSetBounds = r2GeoSetBounds.emplace_back();
+                    titanfall::Bounds& propGeoSetBounds = r2GeoSetBounds.emplace_back();
                     propGeoSetBounds = bounds_from_minmax(propPrimitiveBounds[0]);
-                    titanfall::GeoSet &propGeoSet = r2GeoSets.emplace_back();
+                    titanfall::GeoSet& propGeoSet = r2GeoSets.emplace_back();
                     propGeoSet = {
                         .straddle_group = 0,
                         .num_primitives = 1,
-                        .first_primitive = propPrimitives[0]};
+                        .first_primitive = propPrimitives[0] };
                     r2Cell.num_geo_sets++;
                 }
                 else if (propPrimitives.size() > 1) {
@@ -182,17 +347,17 @@ void addPropsToCmGrid(
                         bounds.addVector(propPrimitiveBounds[i].min);
                         bounds.addVector(propPrimitiveBounds[i].max);
                     }
-                    titanfall::Bounds &propGeoSetBounds = r2GeoSetBounds.emplace_back();
+                    titanfall::Bounds& propGeoSetBounds = r2GeoSetBounds.emplace_back();
                     propGeoSetBounds = bounds_from_minmax(bounds);
-                    titanfall::GeoSet &propGeoSet = r2GeoSets.emplace_back();
+                    titanfall::GeoSet& propGeoSet = r2GeoSets.emplace_back();
                     propGeoSet = {
                         .straddle_group = 0,
                         .num_primitives = (uint16_t)propPrimitives.size(),
-                        .first_primitive = (uint32_t)((propPrimitives.size() & 0x1FFFFF) << 8)};
+                        .first_primitive = (uint32_t)((propPrimitives.size() & 0x1FFFFF) << 8) };
                     r2Cell.num_geo_sets++;
                     for (size_t i = 0; i < propPrimitives.size(); i++) {
                         r2Primitives.push_back(propPrimitives[i]);
-                        titanfall::Bounds &primBounds = r2PrimitiveBounds.emplace_back();
+                        titanfall::Bounds& primBounds = r2PrimitiveBounds.emplace_back();
                         primBounds = bounds_from_minmax(propPrimitiveBounds[i]);
                     }
                 }
@@ -218,6 +383,7 @@ void addPropsToCmGrid(
         }
     }
 }
+
 
 
 void convertTricoll(
@@ -297,8 +463,8 @@ void convertTricoll(
 }
 
 
-int convert(char *in_filename, char *out_filename) {
-    Bsp  r1bsp(in_filename);
+int convert(char *in_filename, const char *out_filename, std::vector<std::string>& model_paths) {
+    Bsp  r1bsp((std::string("maps/") + in_filename).c_str());
     if (!r1bsp.is_valid() || r1bsp.header_->version != titanfall::VERSION) {
         fprintf(stderr, "'%s' is not a Titanfall map!\n", in_filename);
         return 1;
@@ -378,13 +544,25 @@ int convert(char *in_filename, char *out_filename) {
             uint32_t writePtr = static_cast<uint32_t>(write_cursor + 20);
             uint32_t num_model_names;
             memcpy(&num_model_names, &r1GameLump[readPtr], 4);
-            // copy num_model_names + model_name table
+
+            // Copy num_model_names + model_name table
             memcpy(outfile.rawdata(writePtr), &r1GameLump[readPtr], 4 + 128 * num_model_names);
-            readPtr += 4 + num_model_names * 128; writePtr += 4 + num_model_names * 128;
+
+            // Collect model paths
+            for (uint32_t i = 0; i < num_model_names; i++) {
+                const char* model_name = reinterpret_cast<const char*>(&r1GameLump[readPtr + 4 + i * 128]);
+                model_paths.push_back(model_name);
+            }
+
+            // Update read and write pointers after processing model names
+            readPtr += 4 + num_model_names * 128;
+            writePtr += 4 + num_model_names * 128;
+
             // NOTE: num_leaves is always 0 in r1; we can just ignore it
             uint32_t num_leaves;
             memcpy(&num_leaves, &r1GameLump[readPtr], 4);
             readPtr += 4 + 2 * num_leaves;
+
             uint32_t num_props;
             memcpy(&num_props, &r1GameLump[readPtr], 4);
             // copy num_props + unknown_1 & unknown_2
