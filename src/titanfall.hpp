@@ -41,16 +41,25 @@ namespace titanfall {
     static_assert(offsetof(Bounds, cos)     == 0x0E);
 
 
+    struct Primitive {
+        uint32_t  type: 8;
+        uint32_t  index: 16;
+        uint32_t  unique_contents: 8;
+    };
+
+    static_assert(sizeof(Primitive) == 0x04);
+
+
     struct GeoSet {
-        uint16_t  straddle_group;
-        uint16_t  num_primitives;
-        uint32_t  first_primitive;
+        uint16_t   straddle_group;
+        uint16_t   num_primitives;
+        Primitive  primitive;  // TODO: verify
     };
 
     static_assert(sizeof(GeoSet) == 0x08);
     static_assert(offsetof(GeoSet, straddle_group)  == 0x00);
     static_assert(offsetof(GeoSet, num_primitives)  == 0x02);
-    static_assert(offsetof(GeoSet, first_primitive) == 0x04);
+    static_assert(offsetof(GeoSet, primitive)       == 0x04);
 
 
     struct Grid {
