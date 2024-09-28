@@ -25,6 +25,10 @@ namespace titanfall {
     const int TRICOLL_BEVEL_INDICES = 0x61;
     const int LIGHTPROBE_REFS       = 0x68;
     const int REAL_TIME_LIGHTS      = 0x69;
+    /* PRIMITIVE TYPES */
+    // const int BRUSH   = 0x00;
+    // const int TRICOLL = 0x40;
+    const int PROP    = 0x60;
 
 
     struct Bounds {  // bounds for both GeoSet & Primitives
@@ -41,20 +45,17 @@ namespace titanfall {
     static_assert(offsetof(Bounds, cos)     == 0x0E);
 
 
-    struct Primitive {
-        uint32_t  type: 8;
-        uint32_t  index: 16;
-        uint32_t  unique_contents: 8;
-    };
-
-    static_assert(sizeof(Primitive) == 0x04);
-
-
     struct GeoSet {
-        uint16_t   straddle_group;
-        uint16_t   num_primitives;
-        Primitive  primitive;  // TODO: verify
+        uint16_t  straddle_group;
+        uint16_t  num_primitives;
+        uint32_t  primitive;
     };
+    // NOTE: primitive is a bitfield, but C++ isn't consistent enough to use them
+    // -- order & number of bytes used varies depending on implementation & platform
+    // -- we also can't confirm the member order with static_assert afaik
+    // struct Primitive { uint32_t type: 8, index: 16, unique_contents: 8; };
+    // uint32_t primitive = (type << 24) | (index << 8) | (unique_contents);
+    // -- don't forget to check the bounds of each member before composing the uint32_t!
 
     static_assert(sizeof(GeoSet) == 0x08);
     static_assert(offsetof(GeoSet, straddle_group)  == 0x00);

@@ -104,28 +104,31 @@ void addPropsToCmGrid(
             modelContents.push_back(model.getContents());
         }
 
-        std::map<int, MinMax>                           propBoundingBoxes;
-        // ^ {prop_index: prop_AABB}
-        std::map<int, std::map<int, std::vector<int>>>  propGroups;
-        // ^ {grid_cell_index: {unique_contents_index: [prop_index]}}
-        std::map<int, int>                              propPrimitiveIndex;
-        // ^ {prop_index: primitive_index}
-        int primitiveIndex = r1Primitives.size();
 
-        // sort props into GridCells w/ collisionFlag subgroups
+        struct PropData {
+            uint32_t index;  // index in GAME_LUMP.sprp.props
+            MinMax   bounds;
+            uint32_t collision_flags;
+            int      unique_contents;  // index into UniqueContents
+        };
+        // can be turned into Primitive + Bounds or GeoSet + Bounds
+        // NOTE: we can't use bitfields for primitives, since order varies depending on compiler
+        // titanfall::Primitive p {.type=96, .index=index, .unique_contents=unique_contents};
+        // titanfall::GeoSet gs {.straddle_group=..., .num_primitives=1, .primitive={^^^}};
+        // for GeoSets w/ multiple props: {.num_primitives=..., .primitive={.type=0, .index=first_primitive}};
+
+        // sort props into straddle groups while collecting metadata
+        std::map<std::set<int>, std::vector<PropData>> straddleGroupProps;
         for (uint32_t i = 0; i < num_props; i++) {
-            if (props[i].solid_type == 0) {  // non-solid
-                continue;
+            if (props[i].solid_type == 0) {
+                continue;  // prop isn't collidable, skip it
             }
-            // NOTE: some models can't be collided with, despite having a non-zero solid_type
-            // -- we should filter out those props too
 
             // bounding box
             __m128 origin = _mm_set_ps(0, props[i].origin.z, props[i].origin.y, props[i].origin.x);
             __m128 scale = _mm_set1_ps(props[i].scale);
             mstudiopertrihdr_t &perTri = modelBoundingBoxes[props[i].model_name];
-            MinMax minMax = minmax_from_instance_bounds(perTri.bbmin, perTri.bbmax, origin, props[i].angles, scale);
-            propBoundingBoxes[i] = minMax;
+            MinMax bounds = minmax_from_instance_bounds(perTri.bbmin, perTri.bbmax, origin, props[i].angles, scale);
 
             // collision flags
             uint32_t collisionFlags = modelContents[props[i].model_name];
@@ -141,109 +144,171 @@ void addPropsToCmGrid(
             collisionFlags &= ~props[i].collision_flags_remove;
 
             // uniqueContentsIndex
-            uint32_t uniqueContentsIndex = 0;
-            for (uint32_t uniqueContents : r2Contents) {  // get index
+            int uniqueContentsIndex = 0;
+            for (uint32_t uniqueContents : r2Contents) {
                 if (uniqueContents != collisionFlags) {
                     break;
                 }
                 uniqueContentsIndex++;
             }
             if (uniqueContentsIndex == r2Contents.size()) {
-                r2Contents.push_back(collisionFlags);  // append if not in lump
+                if (uniqueContentsIndex > 0xFF) {
+                    // NOTE: this should never happen, but we should still assert assumptions
+                    fprintf(stderr, "UniqueContents too big\n");
+                    exit(1);
+                }
+                r2Contents.push_back(collisionFlags);
             }
 
-            // Primitive
-            titanfall::Primitive primitive = {
-                .type = 0x60,  // PROP
-                .index = i,
-                .unique_contents = uniqueContentsIndex};
-            titanfall::Bounds primitiveBounds = bounds_from_minmax(minMax);
-            r2Primitives.pushBack(primitive);
-            r2PrimitiveBounds.pushBack(primitiveBounds);
-
             // GridCells containing this prop
+            std::set<int> gridCellsTouched;
             float gridCellMins[2], gridCellMaxs[2];  // x & ys
-            for (int y = 0; y < r1Grid.num_gridCells[1]; y++) {
+            for (int y = 0; y < r1Grid.num_cells[1]; y++) {
                 gridCellMins[1] = (y + r1Grid.cell_offset[1]) * r1Grid.scale;
                 gridCellMaxs[1] = gridCellMins[1] + r1Grid.scale;
-                for (int x = 0; x < r1Grid.num_gridCells[0]; x++) {
+                for (int x = 0; x < r1Grid.num_cells[0]; x++) {
                     gridCellMins[0] = (x + r1Grid.cell_offset[0]) * r1Grid.scale;
                     gridCellMaxs[0] = gridCellMins[0] + r1Grid.scale;
-                    if (testCollision(gridCellMins, gridCellMaxs, propBound.min, propBound.max)) {
+                    if (testCollision(gridCellMins, gridCellMaxs, bounds.min, bounds.max)) {
                         int gridCellIndex = y * r1Grid.num_cells[0] + x;
-                        propGroups[gridCellIndex][uniqueContentsIndex].push_back(i);
+                        gridCellsTouched.insert(gridCellIndex);
                     }
                 }
             }
+
+            PropData prop_data = {
+                .index           = i,
+                .bounds          = bounds,
+                .collision_flags = collisionFlags,
+                .unique_contents = uniqueContentsIndex};
+
+            straddleGroupProps[gridCellsTouched].push_back(prop_data);
+
         }
+
+        // TODO: seperate list for oversize props
+        // -- extents.x >= 2048 on either X or Y axis seems reasonable
+        // -- all go into a single GeoSet
+        // -- that GeoSet will be indexed by the Worldspawn GridCell
+
+        // assemble straddle groups
+        std::vector<std::pair<titanfall::GeoSet, titanfall::Bounds>>  propGeoSets;
+        std::map<int, std::set<int>>  cellStraddleGroups;
+        // ^ {cell_index: {geo_set_index}}
+        int32_t group_id = r1Grid.num_straddle_groups;
+        for (auto [cells_set, props_data] : straddleGroupProps) {
+            titanfall::GeoSet  geo_set;
+            titanfall::Bounds  bounds;
+            // straddle group
+            if (cells_set.size() == 1) {
+                geo_set.straddle_group = 0;
+            } else {
+                geo_set.straddle_group = static_cast<uint16_t>(group_id);
+                group_id++;
+            }
+            // primitive(s)
+            if (props_data.size() == 1) {
+                geo_set.num_primitives = 1;
+                PropData  prop_data = props_data[0];
+                geo_set.primitive = (0x60 << 24) | (prop_data.index << 8) | (prop_data.unique_contents);
+                // bounds
+                bounds = bounds_from_minmax(props_data[0].bounds);
+            } else {
+                geo_set.num_primitives = static_cast<uint16_t>(props_data.size());
+                uint16_t  index = static_cast<uint16_t>(r2Primitives.size());
+                uint32_t  collision_flags = 0x00000000;
+                // bounds
+                MinMax  geoSetBounds;
+                for (auto prop_data : props_data) {
+                    // per-prop primitive & bounds
+                    uint32_t  prop_primitive = (0x60 << 24) | (prop_data.index << 8) | (prop_data.unique_contents);
+                    r2Primitives.push_back(prop_primitive);
+                    titanfall::Bounds  prop_bounds = bounds_from_minmax(props_data[0].bounds);
+                    r2PrimitiveBounds.push_back(prop_bounds);
+                    // expand bounds
+                    geoSetBounds.addVector(prop_data.bounds.min);
+                    geoSetBounds.addVector(prop_data.bounds.max);
+                    // combine contents_flags
+                    collision_flags |= prop_data.collision_flags;
+                }
+                // get unique_contents_index of GeoSet
+                int unique_contents_index = 0;
+                for (uint32_t unique_contents : r2Contents) {
+                    if (unique_contents != collision_flags) {
+                        break;
+                    }
+                    unique_contents_index++;
+                }
+                if (unique_contents_index == r2Contents.size()) {
+                    if (unique_contents_index > 0xFF) {
+                        // NOTE: this should never happen, but we should still assert assumptions
+                        fprintf(stderr, "UniqueContents too big\n");
+                        exit(1);
+                    }
+                    r2Contents.push_back(collision_flags);
+                }
+                // index child Primitives & UniqueContents
+                // NOTE: type is always 0 when num_primitives == 1
+                geo_set.primitive = (index << 8) | (unique_contents_index);
+                bounds = bounds_from_minmax(geoSetBounds);
+            }
+
+            // link GeoSet to GridCell(s)
+            for (int cell_index : cells_set) {
+                cellStraddleGroups[cell_index].insert(static_cast<int>(propGeoSets.size()));
+            }
+            propGeoSets.push_back({geo_set, bounds});
+        }
+
 
         // add props to worldspawn GridCells
         int numWorldspawnGridCells = r1Grid.num_cells[0] * r1Grid.num_cells[1];
         for (int i = 0; i < numWorldspawnGridCells; i++) {
-            titanfall::GridCell  r1Cell = r1GridCells[i];
-            titanfall::GridCell &r2Cell = r2GridCells.emplace_back();
+            titanfall::GridCell  r1GridCell = r1GridCells[i];
+            titanfall::GridCell  r2GridCell;
 
-            r2Cell.first_geo_set = (uint16_t)r2GeoSets.size();
-            r2Cell.num_geo_sets = r1Cell.num_geo_sets;
-
-            // copy GeoSets from the r1 GridCell
-            for (uint32_t i = 0; i < r1Cell.num_geo_sets; i++) {
-                r2GeoSets.push_back(r1GeoSets[r1Cell.first_geo_set + i]);
-                r2GeoSetBounds.push_back(r1GeoSetBounds[r1Cell.first_geo_set + i]);
+            // copy GeoSets from r1
+            r2GridCell.first_geo_set = static_cast<uint16_t>(r2GeoSets.size());
+            r2GridCell.num_geo_sets  = r1GridCell.num_geo_sets;
+            for (uint32_t j = 0; j < r1GridCell.num_geo_sets; j++) {
+                r2GeoSets.push_back(r1GeoSets[r1GridCell.first_geo_set + j]);
+                r2GeoSetBounds.push_back(r1GeoSetBounds[r1GridCell.first_geo_set + j]);
             }
 
-            // link props to this GridCell
-            for (const auto& [uniqueContentsIndex, propIndices] : propGroups[i]) {
-                MinMax geoSetMinMax = MinMax();
+            // TODO: optimisation:
+            // if (r1Cell.num_geo_sets == 0) {
+            //     r2Cell.num_geo_sets  = static_cast<uint16_t>(cellStraddleGroups[i].size());
+            //     r2Cell.first_geo_set = ...;  // index previous appearance of cellStraddleGroups[i]
+            // }
 
-                for (auto &propIndex : propIndices) {
-                    MinMax propBoundingBox = propBoundingBoxes[propIndex];
-                    geoSetMinMax.addVector(propBoundingBox.min);
-                    geoSetMinMax.addVector(propBoundingBox.max);
-                }
+            // append prop GeoSets
+            r2GridCell.num_geo_sets += static_cast<uint16_t>(cellStraddleGroups[i].size());
+            for (auto geo_set_index : cellStraddleGroups[i]) {
+                std::pair<titanfall::GeoSet, titanfall::Bounds>  pair;
+                pair = propGeoSets[geo_set_index];  // {geo_set, bounds}
+                r2GeoSets.push_back(pair.first);
+                r2GeoSetBounds.push_back(pair.second);
+            }
+            r2GridCells.push_back(r2GridCell);
+        }
 
-                titanfall::GeoSet geoSet = {
-                    .straddle_group = 0,  // TODO
-                    .num_primitives = propIndices.size(),  // valid?
-                    .primitive = {
-                        .type = 0,  // doesn't always match child primitives
-                        .index = primitiveIndices[propIndices[0]],
-                        .unique_contents = uniqueContentsIndex}};
-                // NOTE: we're making 1 geoset per uniqueContents
-                // -- but if we bitwise-OR flags we could have 1 GeoSet per GridCell
-
-                titanfall::Bounds geoSetBounds = bounds_from_minmax(geoSetMinMax);
-
-                // append GeoSet to GridCell
-                r2GeoSets.push_back(geoSet);
-                r2GeoSetBounds.push_back(geoSetBounds);
-                r2Cell.num_geo_sets++;
-
-                if (r2GeoSets.size() > 0xFFFF) {
-                    fprintf(stderr, "Geosets too big\n");
-                    exit(1);
-                }
-            }  // for (uniqueContentsIndex, propIndices)
-        }  // for prop
-    }  // for gameLump
-
-        // copy geosets for each bsp model
+        // copy GeoSets for each bsp Model
         uint32_t numBspModels = r1bsp.get_lump_length(titanfall::MODELS) / 32;
         for (uint32_t i = 0; i < numBspModels; i++) {
-            titanfall::GridCell gridCell = r1GridCells[numWorldspawnGridCells + i];
-            uint32_t start = gridCell.first_geo_set;
-            // copy geo sets frim r1
-            for (uint32_t j = 0; j < cell.num_geo_sets; j++) {
-                r2GeoSets.push_back(r1GeoSets[start + j]);
-                r2GeoSetBounds.push_back(r1GeoSetBounds[start + j]);
+            titanfall::GridCell r1GridCell = r1GridCells[numWorldspawnGridCells + i];
+            // copy GeoSets from r1
+            for (uint32_t j = 0; j < r1GridCell.num_geo_sets; j++) {
+                r2GeoSets.push_back(r1GeoSets[r1GridCell.first_geo_set + j]);
+                r2GeoSetBounds.push_back(r1GeoSetBounds[r1GridCell.first_geo_set + j]);
             }
-            gridCell.first_geo_set = (uint16_t)r2GeoSets.size();
-            r2GridCells.push_back(gridCell);
+            r1GridCell.first_geo_set = static_cast<uint16_t>(r2GeoSets.size());
+            r2GridCells.push_back(r1GridCell);
+        }
 
-            if (r2GeoSets.size() > 0xFFFF) {
-                fprintf(stderr, "Geosets too big\n");
-                exit(1);
-            }
+        // check GeoSets limit
+        if (r2GeoSets.size() > 0xFFFF) {
+            fprintf(stderr, "Geosets too big: %d > 65535\n", (int)r2GeoSets.size());
+            exit(1);
         }
     }
 }
