@@ -47,12 +47,13 @@ int main(int argc, char* argv[]) {
 
 void addPropsToCmGrid(
     Bsp                              &r1bsp,
+    titanfall::Grid                  &r2Grid,
+    std::vector<titanfall::GridCell> &r2GridCells,
     std::vector<titanfall::GeoSet>   &r2GeoSets,
     std::vector<titanfall::Bounds>   &r2GeoSetBounds,
-    std::vector<titanfall::GridCell> &r2GridCells,
-    std::vector<uint32_t>            &r2Contents,
     std::vector<uint32_t>            &r2Primitives,
-    std::vector<titanfall::Bounds>   &r2PrimitiveBounds) {
+    std::vector<titanfall::Bounds>   &r2PrimitiveBounds,
+    std::vector<uint32_t>            &r2Contents) {
 
     auto r1GameLump        = r1bsp.get_lump<char>               (titanfall::GAME_LUMP);
     auto r1Grid            = r1bsp.get_lump<titanfall::Grid>    (titanfall::CM_GRID)[0];
@@ -72,6 +73,8 @@ void addPropsToCmGrid(
     for (size_t i = 0; i < r1Contents.size(); i++) {
         r2Contents.push_back(r1Contents[i]);
     }
+
+    r2Grid = r1Grid;  // will update num_straddle_groups later
 
     // parse gamelump
     uint32_t subLumpCount = *(uint32_t*)&r1GameLump[0];
@@ -260,6 +263,8 @@ void addPropsToCmGrid(
             propGeoSets.push_back({geo_set, bounds});
         }
 
+        // update Grid.num_straddle_groups
+        r2Grid.num_straddle_groups = group_id;
 
         // add props to worldspawn GridCells
         int numWorldspawnGridCells = r1Grid.num_cells[0] * r1Grid.num_cells[1];
@@ -436,13 +441,14 @@ int convert(char *in_filename, char *out_filename) {
     std::vector<uint16_t>                 r2BevelStarts;
     convertTricoll(r1bsp, r2TricollHeader, r2BevelStarts, r2BevelIndices);
 
+    titanfall::Grid                  r2Grid;
+    std::vector<titanfall::GridCell> r2GridCells;
     std::vector<titanfall::GeoSet>   r2GeoSets;
     std::vector<titanfall::Bounds>   r2GeoSetBounds;
-    std::vector<titanfall::GridCell> r2GridCells;
-    std::vector<uint32_t>            r2UniqueContents;
-    std::vector<uint32_t>            r2Primitves;
+    std::vector<uint32_t>            r2Primitives;
     std::vector<titanfall::Bounds>   r2PrimitiveBounds;
-    addPropsToCmGrid(r1bsp, r2GeoSets, r2GeoSetBounds, r2GridCells, r2UniqueContents, r2Primitves, r2PrimitiveBounds);
+    std::vector<uint32_t>            r2UniqueContents;
+    addPropsToCmGrid(r1bsp, r2Grid, r2GridCells, r2GeoSets, r2GeoSetBounds, r2Primitives, r2PrimitiveBounds, r2UniqueContents);
 
     for (auto &k : lumps) {
         int padding = 4 - (write_cursor % 4);
@@ -545,6 +551,10 @@ int convert(char *in_filename, char *out_filename) {
         case titanfall::CM_GEO_SET_BOUNDS:
             WRITE_NEW_LUMP(titanfall::Bounds, r2GeoSetBounds);
             break;
+        case titanfall::CM_GRID:
+            // NOTE: lump length never changes, always 28 bytes
+            memcpy(outfile.rawdata(write_cursor), reinterpret_cast<char*>(&r2Grid), r2lump.length);
+            break;
         case titanfall::CM_GRID_CELLS:
             WRITE_NEW_LUMP(titanfall::GridCell, r2GridCells);
             break;
@@ -552,7 +562,7 @@ int convert(char *in_filename, char *out_filename) {
             WRITE_NEW_LUMP(uint32_t, r2UniqueContents);
             break;
         case titanfall::CM_PRIMITIVES:
-            WRITE_NEW_LUMP(uint32_t, r2Primitves);
+            WRITE_NEW_LUMP(uint32_t, r2Primitives);
             break;
         case titanfall::CM_PRIMITIVE_BOUNDS:
             WRITE_NEW_LUMP(titanfall::Bounds, r2PrimitiveBounds);
