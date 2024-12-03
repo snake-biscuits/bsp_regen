@@ -215,7 +215,7 @@ void addPropsToCmGrid(
                 PropData  prop_data = props_data[0];
                 geo_set.primitive = (0x60 << 24) | (prop_data.index << 8) | (prop_data.unique_contents);
                 // bounds
-                bounds = bounds_from_minmax(props_data[0].bounds);
+                bounds = bounds_from_minmax(prop_data.bounds);
             } else {
                 geo_set.num_primitives = static_cast<uint16_t>(props_data.size());
                 uint16_t  index = static_cast<uint16_t>(r2Primitives.size());
@@ -226,7 +226,7 @@ void addPropsToCmGrid(
                     // per-prop primitive & bounds
                     uint32_t  prop_primitive = (0x60 << 24) | (prop_data.index << 8) | (prop_data.unique_contents);
                     r2Primitives.push_back(prop_primitive);
-                    titanfall::Bounds  prop_bounds = bounds_from_minmax(props_data[0].bounds);
+                    titanfall::Bounds  prop_bounds = bounds_from_minmax(prop_data.bounds);
                     r2PrimitiveBounds.push_back(prop_bounds);
                     // expand bounds
                     geoSetBounds.addVector(prop_data.bounds.min);
@@ -237,7 +237,7 @@ void addPropsToCmGrid(
                 // get unique_contents_index of GeoSet
                 int unique_contents_index = 0;
                 for (uint32_t unique_contents : r2Contents) {
-                    if (unique_contents != collision_flags) {
+                    if (unique_contents == collision_flags) {
                         break;
                     }
                     unique_contents_index++;
