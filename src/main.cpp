@@ -301,13 +301,16 @@ void addPropsToCmGrid(
         uint32_t numBspModels = r1bsp.get_lump_length(titanfall::MODELS) / 32;
         for (uint32_t i = 0; i < numBspModels; i++) {
             titanfall::GridCell r1GridCell = r1GridCells[numWorldspawnGridCells + i];
+            titanfall::GridCell r2GridCell;
+
             // copy GeoSets from r1
+            r2GridCell.first_geo_set = static_cast<uint16_t>(r2GeoSets.size());
+            r2GridCell.num_geo_sets  = r1GridCell.num_geo_sets;
             for (uint32_t j = 0; j < r1GridCell.num_geo_sets; j++) {
                 r2GeoSets.push_back(r1GeoSets[r1GridCell.first_geo_set + j]);
                 r2GeoSetBounds.push_back(r1GeoSetBounds[r1GridCell.first_geo_set + j]);
             }
-            r1GridCell.first_geo_set = static_cast<uint16_t>(r2GeoSets.size());
-            r2GridCells.push_back(r1GridCell);
+            r2GridCells.push_back(r2GridCell);
         }
 
         // check GeoSets limit
