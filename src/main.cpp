@@ -507,7 +507,7 @@ int convert(char *in_filename, char *out_filename) {
                     .flags                  = r1Prop.flags,
                     .skin                   = r1Prop.skin,
                     .cubemap                = r1Prop.cubemap,
-                    .forced_fade_scale      = r1Prop.forced_fade_scale,
+                    .forced_fade_scale      = r1Prop.fade_distance_min,
                     .lighting_origin        = r1Prop.lighting_origin,
                     .diffuse_modulation_r   = r1Prop.diffuse_modulation_r,
                     .diffuse_modulation_g   = r1Prop.diffuse_modulation_g,
