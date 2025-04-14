@@ -71,6 +71,7 @@ CMakeCache.txt
 cmake_install.cmake
 cmake_uninstall.cmake
 Makefile
+bin/
 
 # GNU make builds
 Makefile
